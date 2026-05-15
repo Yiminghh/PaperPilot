@@ -40,6 +40,11 @@ config/paper-daily-config.yaml
 
 The `paths` section controls project-local state, logs, run artifacts, Hugging Face cache, and Obsidian output directories. CLI arguments override config values when provided.
 
+Interest and negative filters are intentionally split:
+
+- `config/interest-profile.yaml`: positive research interests and query expansion only.
+- `config/negative-keywords.yaml`: hard excludes and soft downweight terms only.
+
 Useful checks:
 
 ```bash

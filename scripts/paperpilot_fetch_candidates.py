@@ -39,16 +39,13 @@ def tokenize(text: str) -> list[str]:
     return [t.lower() for t in TOKEN_RE.findall(text) if len(t) > 1]
 
 
-def flatten_interest(interest: dict[str, Any]) -> tuple[list[dict[str, str]], list[str], list[str]]:
+def flatten_interest(interest: dict[str, Any]) -> list[dict[str, str]]:
     include = interest.get("include") or {}
     queries: list[dict[str, str]] = []
     for group, weight in [("primary", "primary"), ("secondary", "secondary"), ("query_expansion", "query")]:
         for text in include.get(group, []) or []:
             queries.append({"text": str(text), "group": weight})
-    negative = interest.get("negative") or {}
-    hard = [str(x).lower() for x in negative.get("hard_exclude", []) or []]
-    soft = [str(x).lower() for x in negative.get("soft_downweight", []) or []]
-    return queries, hard, soft
+    return queries
 
 
 def fetch_arxiv_query(
@@ -694,9 +691,9 @@ def main() -> int:
         or os.getenv("EMBED_MODEL")
         or str(embed_conf.get("api_model") or embed_conf.get("model") or "")
     )
-    queries, hard_exclude, soft_downweight = flatten_interest(interest)
-    hard_exclude.extend(str(x).lower() for x in negative.get("hard_exclude", []) or [])
-    soft_downweight.extend(str(x).lower() for x in negative.get("soft_downweight", []) or [])
+    queries = flatten_interest(interest)
+    hard_exclude = [str(x).lower() for x in negative.get("hard_exclude", []) or []]
+    soft_downweight = [str(x).lower() for x in negative.get("soft_downweight", []) or []]
 
     output_path = Path(args.output).expanduser()
     output_path.parent.mkdir(parents=True, exist_ok=True)

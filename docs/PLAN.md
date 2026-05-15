@@ -335,6 +335,12 @@ negative-keywords.yaml:
     - pure benchmark leaderboard
     - generic LLM without science or graph relevance
 
+配置边界：
+
+- `interest-profile.yaml` 只保存正向兴趣与 query expansion。
+- `negative-keywords.yaml` 只保存 hard exclude 与 soft downweight。
+- 候选生成器不再从 `interest-profile.yaml` 读取 `negative:`，避免两份负向 schema。
+
 retrieval:
   category_policy:
     cs.CL: only_keep_if_llm_or_foundation_model_relevant_to_science_or_graphs

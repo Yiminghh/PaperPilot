@@ -13,6 +13,11 @@ Read:
 - `state/paper-memory/query_pack.md` if it exists
 - recent readable notes under `paths.daily_notes_dir`
 
+Config boundary:
+
+- `config/interest-profile.yaml` contains only positive interests and query expansion.
+- `config/negative-keywords.yaml` contains only hard excludes and soft downweight terms.
+
 Write only:
 
 - `runs/YYYY-MM-DD/review.json`
