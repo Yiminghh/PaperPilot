@@ -3,9 +3,9 @@ project:
   timezone: Europe/London
 
 paths:
-  project_root: /Users/hym/PycharmProjects/PaperPilot
-  paperflow_root: /Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian/3-PaperFlow
-  daily_notes_dir: /Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian/3-PaperFlow/Paper-Daily
+  project_root: .
+  paperflow_root: ~/Obsidian/3-PaperFlow
+  daily_notes_dir: ~/Obsidian/3-PaperFlow/Paper-Daily
   runs_dir: runs
   weekly_runs_dir: runs/weekly
   state_dir: state
@@ -57,6 +57,14 @@ retrieval:
     cs.CL: only_keep_if_llm_or_foundation_model_relevant_to_science_or_graphs
     cs.CV: only_keep_if_geometric_3d_scientific_or_molecular_relevant
     q-bio: keep_if_ai4science_or_representation_learning_relevant
+  category_policy_rules:
+    only_keep_if_llm_or_foundation_model_relevant_to_science_or_graphs:
+      - [large language model, llm, foundation model, agent, retrieval augmented, rag, transformer]
+      - [science, scientific, graph, molecular, molecule, protein, rna, biomolecule, chemistry, biology, biomedical, clinical]
+    only_keep_if_geometric_3d_scientific_or_molecular_relevant:
+      - [3d, point cloud, mesh, geometric deep learning, molecular, molecule, protein, rna, biomolecule, chemistry, scientific, medical, clinical, microscopy, cryo, cell, biological, material, drug]
+    keep_if_ai4science_or_representation_learning_relevant:
+      - [machine learning, deep learning, neural, foundation model, language model, representation, prediction, predicting, predict, generative, diffusion, graph, transformer, embedding, qsar, clustering, classification, regression, classifier]
   priority_boost:
     topological_deep_learning: 1.5
     higher_order_graphs: 1.5
@@ -65,3 +73,20 @@ retrieval:
     generic_llm_without_science_or_graph: 0.6
     quantum_related: 0.0
     quantum_chemistry_with_molecular_ml: 0.7
+  priority_boost_rules:
+    topological_deep_learning:
+      any: [topological, simplicial, cell complex, higher-order]
+    higher_order_graphs:
+      any: [higher-order graph, hypergraph, simplicial]
+    molecular_or_rna_ai4science:
+      any: [molecular, molecule, rna, biomolecule, protein]
+    foundation_models_for_science:
+      any: [foundation model]
+    generic_llm_without_science_or_graph:
+      any: [large language model, llm]
+      none: [science, scientific, graph, molecular, rna]
+    quantum_related:
+      any: [quantum]
+      none: [molecular, molecule, chemistry]
+    quantum_chemistry_with_molecular_ml:
+      any: [quantum chemistry]

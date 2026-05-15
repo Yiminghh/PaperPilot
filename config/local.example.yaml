@@ -1,0 +1,7 @@
+# Copy to config/local.yaml for machine-specific paths.
+# config/local.yaml is gitignored and deep-merged over paper-daily-config.yaml.
+
+paths:
+  project_root: /absolute/path/to/PaperPilot
+  paperflow_root: /absolute/path/to/Obsidian/3-PaperFlow
+  daily_notes_dir: /absolute/path/to/Obsidian/3-PaperFlow/Paper-Daily

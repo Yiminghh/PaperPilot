@@ -35,8 +35,9 @@ Requirements:
 9. If `runs/YYYY-MM-DD/enriched.json` exists, use it for `deep_dives` and set each `source_basis` from the enrichment record.
 10. If no enrichment exists for a paper, `deep_dives` are summary-level. Set `source_basis` to `title+abstract` and do not imply that the full PDF was read.
 11. Do not promote unverified non-arXiv papers to must-read. If a candidate has `verification.status != verified`, mention the uncertainty and put it in `later` or `skip`.
-12. Each deep dive must include TL;DR, Chinese summary, problem, method, core innovations, evidence, limitations, relevance, reusable ideas, and questions to check.
-13. Keep Obsidian readability in mind: write compact but substantive Chinese paragraphs, not one-line placeholders.
+12. Every paper in `candidates.json` must appear exactly once in one of `must_read`, `worth_reading`, `later`, or `skip`; this is how `state/seen-papers.txt` avoids resurfacing already reviewed candidates.
+13. Each deep dive must include TL;DR, Chinese summary, problem, method, core innovations, evidence, limitations, relevance, reusable ideas, and questions to check.
+14. Keep Obsidian readability in mind: write compact but substantive Chinese paragraphs, not one-line placeholders.
 
 Suggested daily sequence:
 

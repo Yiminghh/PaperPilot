@@ -17,3 +17,13 @@ soft_downweight:
   - quantum chemistry
   - pure benchmark leaderboard
   - generic LLM without science or graph relevance
+
+context_exceptions:
+  quantum chemistry:
+    allow_if_any:
+      - molecule
+      - molecular
+      - protein
+      - rna
+      - drug
+      - material

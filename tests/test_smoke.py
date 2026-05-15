@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "scripts"
-sys.path.insert(0, str(SCRIPTS))
 
 
 def sample_candidates() -> dict:
@@ -85,7 +82,7 @@ def sample_review() -> dict:
 
 
 def test_verify_arxiv_batch_strips_version(monkeypatch):
-    import verify_papers
+    from paperpilot import verify_papers
 
     xml = b"""<?xml version="1.0" encoding="UTF-8"?>
     <feed xmlns="http://www.w3.org/2005/Atom">
@@ -112,7 +109,7 @@ def test_verify_arxiv_batch_strips_version(monkeypatch):
 
 
 def test_sync_feedback_parses_rating(tmp_path):
-    from sync_feedback_from_notes import parse_note
+    from paperpilot.sync_feedback_from_notes import parse_note
 
     note = tmp_path / "2026-05-15-paper-codex.md"
     note.write_text(
@@ -144,7 +141,6 @@ date: 2026-05-15
             "system_decision": "必读",
             "user_action": "read",
             "user_rating": "5",
-            "user_reason": "useful",
             "user_feedback": "useful",
             "url": "https://arxiv.org/abs/2605.12823",
             "tags": [],
@@ -160,14 +156,14 @@ def test_review_schema_accepts_minimal_review():
 
 
 def test_render_requires_existing_schema(tmp_path):
-    import render_daily_note
+    from paperpilot import render_daily_note
 
     with pytest.raises(SystemExit, match="review schema not found"):
         render_daily_note.validate_review({}, tmp_path / "missing-schema.json")
 
 
 def test_render_rejects_duplicate_deep_dives():
-    import render_daily_note
+    from paperpilot import render_daily_note
 
     review = sample_review()
     candidates = sample_candidates()
@@ -178,7 +174,7 @@ def test_render_rejects_duplicate_deep_dives():
 
 
 def test_render_note_omits_old_navigation_sections():
-    import render_daily_note
+    from paperpilot import render_daily_note
 
     review = sample_review()
     candidates = sample_candidates()
@@ -189,7 +185,7 @@ def test_render_note_omits_old_navigation_sections():
 
 
 def test_update_seen_marks_only_reviewed_papers(tmp_path):
-    import render_daily_note
+    from paperpilot import render_daily_note
 
     seen_path = tmp_path / "seen.txt"
     review = {
@@ -201,3 +197,45 @@ def test_update_seen_marks_only_reviewed_papers(tmp_path):
     }
     render_daily_note.update_seen(review, seen_path)
     assert seen_path.read_text(encoding="utf-8").splitlines() == ["arxiv:1", "arxiv:2"]
+
+
+def test_hard_exclude_context_exception_keeps_molecular_quantum_chemistry():
+    from paperpilot import paperpilot_fetch_candidates as fetch
+
+    paper = {
+        "title": "Quantum chemistry model for molecular generation",
+        "abstract": "A molecular representation learning method for drug discovery.",
+        "categories": ["cs.LG"],
+    }
+    exceptions = {"quantum chemistry": ["molecular", "drug"]}
+    assert fetch.is_excluded(paper, ["quantum chemistry"], exceptions=exceptions) == (False, "")
+    assert fetch.matched_soft_downweight_terms(paper, ["quantum chemistry"], exceptions) == []
+
+
+def test_category_policy_uses_configured_term_groups():
+    from paperpilot import paperpilot_fetch_candidates as fetch
+
+    paper = {
+        "title": "Generic language model benchmark",
+        "abstract": "A transformer benchmark without scientific context.",
+        "categories": ["cs.CL"],
+    }
+    policies = {"cs.CL": "needs_llm_and_science"}
+    rules = {"needs_llm_and_science": [["language model", "transformer"], ["molecular", "graph"]]}
+    assert fetch.category_policy_reason(paper, policies, rules) == "needs_llm_and_science"
+
+
+def test_priority_boost_rules_are_config_driven():
+    from paperpilot import paperpilot_fetch_candidates as fetch
+
+    paper = {
+        "title": "Simplicial molecular graph learning",
+        "abstract": "",
+        "categories": ["cs.LG"],
+    }
+    boosts = {"topology": 2.0, "generic_llm": 0.5}
+    rules = {
+        "topology": {"any": ["simplicial"]},
+        "generic_llm": {"any": ["llm"], "none": ["molecular"]},
+    }
+    assert fetch.apply_priority_boost(paper, 1.0, boosts, rules) == 2.0

@@ -6,12 +6,14 @@ Generate a daily paper recommendation note for Yiming Huang with Codex.
 
 ## Canonical Paths
 
-- Project: `/Users/hym/PycharmProjects/PaperPilot`
-- Obsidian output: `/Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian/3-PaperFlow`
-- Daily notes: `/Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian/3-PaperFlow/Paper-Daily/YYYY/YYYY-MM-DD-paper-codex.md`
-- Code/state/logs/cache: keep inside `/Users/hym/PycharmProjects/PaperPilot`
+Paths are configured through `config/paper-daily-config.yaml` plus ignored `config/local.yaml`.
 
-These canonical paths are configured in `config/paper-daily-config.yaml` under `paths`. Runtime scripts should read that config instead of hardcoding paths.
+- Project root: `paths.project_root`
+- Obsidian output: `paths.paperflow_root`
+- Daily notes: `paths.daily_notes_dir`
+- Code/state/logs/cache: keep under `paths.project_root`
+
+Runtime scripts should read config instead of hardcoding paths.
 
 ## Daily Workflow
 
@@ -19,8 +21,8 @@ These canonical paths are configured in `config/paper-daily-config.yaml` under `
 2. Read `runs/YYYY-MM-DD/candidates.json`.
 3. Read `state/paper-memory/query_pack.md` if it exists.
 4. Write an initial `runs/YYYY-MM-DD/review.json` following `config/review.schema.json`.
-5. Optionally run `scripts/enrich_top_papers.py --date YYYY-MM-DD --top-n 3`, then update `review.json` deep dives from `enriched.json`.
-6. Run `scripts/render_daily_note.py --date YYYY-MM-DD`.
+5. Optionally run `./.venv/bin/python scripts/enrich_top_papers.py --date YYYY-MM-DD --top-n 3`, then update `review.json` deep dives from `enriched.json`.
+6. Run `./.venv/bin/python scripts/render_daily_note.py --date YYYY-MM-DD`.
 7. Confirm the Obsidian note was written.
 
 ## Artifact Contract
@@ -48,6 +50,7 @@ raw.json -> candidates.json -> initial review.json -> enriched.json -> final rev
 - In deep-dive Markdown, do not add a blank line between bold field headings and their content. Use a single newline.
 - Prefix paper headings with simple numeric indexes, such as `### 1. Paper Title`.
 - `state/seen-papers.txt` should mark papers that actually appear in the rendered review, not every raw candidate.
+- Codex should classify every candidate exactly once into `must_read`, `worth_reading`, `later`, or `skip`, so reviewed candidates do not resurface within the arXiv window.
 
 ## Manual Feedback Contract
 

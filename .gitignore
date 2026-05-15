@@ -3,6 +3,7 @@
 runs/
 state/
 logs/
+config/local.yaml
 __pycache__/
 *.pyc
 *.egg-info/
