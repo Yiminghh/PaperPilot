@@ -393,24 +393,25 @@ retrieval:
 
 默认配置：
 
-```bash
-PAPERPILOT_EMBED_PROVIDER=local
-PAPERPILOT_EMBED_MODEL=BAAI/bge-m3
-PAPERPILOT_EMBED_DEVICE=cpu
-PAPERPILOT_EMBED_BATCH_SIZE=8
-HF_HOME=/Users/hym/PycharmProjects/PaperPilot/.cache/huggingface
-TRANSFORMERS_CACHE=/Users/hym/PycharmProjects/PaperPilot/.cache/huggingface
+```yaml
+embedding:
+  provider: local
+  model: BAAI/bge-m3
+  device: cpu
+  batch_size: 8
+  cache_dir: .cache/huggingface
 ```
 
 `BAAI/bge-m3` 作为正式默认模型。预计模型缓存约 2.2-4.3 GB，连同 Python 依赖建议预留 8-10 GB。模型缓存放在 `/Users/hym/PycharmProjects/PaperPilot/.cache/huggingface`，不要放进 Obsidian / OneDrive 目录，避免同步大量模型文件。BGE-M3 不沿用 E5 的 `query:` / `passage:` 前缀，默认空前缀并使用归一化向量做余弦相似度。
 
 低资源 fallback：
 
-```bash
-PAPERPILOT_EMBED_PROVIDER=local
-PAPERPILOT_EMBED_MODEL=BAAI/bge-small-en-v1.5
-PAPERPILOT_EMBED_DEVICE=cpu
-PAPERPILOT_EMBED_BATCH_SIZE=16
+```yaml
+embedding:
+  provider: local
+  model: BAAI/bge-small-en-v1.5
+  device: cpu
+  batch_size: 16
 ```
 
 API embedding 模式：
@@ -631,7 +632,7 @@ rrf:
 2. 固定章节顺序和字段名。
 3. 保留 `action:: pending` 和 `feedback:: pending`，方便后续人工标注。
 4. 避免 Codex 每天生成不同 Markdown 风格。
-5. 使用 Obsidian callout、总览表和分档表提高可读性。
+5. 只在重点论文的核心内容使用 Obsidian callout，避免 callout 过多导致重点被稀释。
 6. 对 `deep_dives` 渲染更完整的重点论文区。
 
 ## Obsidian 日报格式
@@ -657,41 +658,43 @@ tags:
 
 # YYYY-MM-DD Paper Daily
 
-> [!abstract] 今日结论
-> 今日整体判断。
+## 总览
 
-## 快速导航
+今日整体判断。
 
-| 优先级 | 论文 | 方向 | 建议动作 |
-|---|---|---|---|
+### 运行信息
 
-## 先读这几篇
-
-1. Paper A
-2. Paper B
-3. Paper C
+- 原始抓取：...
+- 候选数：...
 
 ## 重点论文深读
 
-### Paper Title
+### 1. Paper Title
 
-> [!tip] TL;DR
+> [!tip] 核心内容
+> **TL;DR**：...
+>
+> **对我的价值**：...
+>
+> **阅读优先级**：...
+
+**中文摘要**
 > ...
 
-> [!note] 中文摘要
-> ...
+**研究问题**
+...
 
-> [!example] 方法拆解
-> ...
+**方法拆解**
+...
 
-> [!warning] 局限与待核查
-> ...
+**局限性**
+...
 
 ## 分档推荐
 
 ## 今日必读
 
-### Paper Title
+### 1. Paper Title
 
 - source:: arxiv
 - canonical_id:: arxiv:2605.12345
@@ -701,11 +704,9 @@ tags:
 - rating:: pending
 - feedback:: pending
 
-> [!tip] 一句话结论
-> ...
+**一句话结论**：...
 
-> [!note] 推荐理由
-> ...
+**推荐理由**：...
 
 ## 值得看
 
@@ -879,7 +880,7 @@ jsonschema
 4. 在 `review.json` 中加入 `deep_dives`，覆盖 Top 3-5 必读论文。
 5. 用 `scripts/render_daily_note.py` 渲染美化版 `paper-codex.md`。
 6. 写入 `Paper-Daily/YYYY/`。
-7. 更新 `state/seen-papers.txt`。
+7. 更新 `state/seen-papers.txt`，只记录实际进入日报评审区的论文，不把全部候选都标记为 seen。
 
 验收：
 
@@ -889,7 +890,8 @@ jsonschema
 - 跳过理由明确。
 - `review.json` 通过 schema 校验。
 - Markdown 在 Obsidian 中可直接阅读。
-- 日报顶部有快速导航表和先读列表。
+- 日报顶部有总览，然后直接进入重点论文深读；不再使用快速导航表或单独的先读列表。
+- 论文标题前带简单编号，例如 `### 1. Paper Title`。
 
 ### Phase 3：反馈闭环
 

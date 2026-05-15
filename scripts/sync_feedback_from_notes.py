@@ -12,6 +12,7 @@ from paperpilot_utils import load_jsonl, write_jsonl
 
 FIELD_RE = re.compile(r"^-\s*([A-Za-z_]+)::\s*(.*)$")
 HEADING_RE = re.compile(r"^###\s+(.+)$")
+HEADING_NUMBER_RE = re.compile(r"^\d+\.\s+")
 H2_RE = re.compile(r"^##\s+(.+)$")
 RANKED_SECTION_TITLES = {"今日必读", "值得看", "稍后", "跳过"}
 
@@ -59,7 +60,8 @@ def parse_note(path: Path, include_pending: bool = False) -> list[dict[str, Any]
                 continue
             if current:
                 records.append(current)
-            current = {"date": date, "title": h.group(1).strip(), "section": current_section}
+            title = HEADING_NUMBER_RE.sub("", h.group(1).strip(), count=1)
+            current = {"date": date, "title": title, "section": current_section}
             continue
         if current is None:
             continue

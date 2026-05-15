@@ -8,17 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from config_utils import DEFAULT_CONFIG, load_config, resolve_path
-from paperpilot_utils import load_jsonl
+from paperpilot_utils import clean_text, load_jsonl
 
 
 POSITIVE_ACTIONS = {"read", "save"}
 NEGATIVE_ACTIONS = {"skip", "not_relevant"}
-
-
-def clean(value: Any) -> str:
-    if value is None:
-        return ""
-    return str(value).strip()
 
 
 def counter_table(counter: collections.Counter[str], empty: str = "无。") -> list[str]:
@@ -31,22 +25,22 @@ def counter_table(counter: collections.Counter[str], empty: str = "无。") -> l
 
 
 def action_counter(records: list[dict[str, Any]]) -> collections.Counter[str]:
-    return collections.Counter(clean(r.get("user_action")) for r in records)
+    return collections.Counter(clean_text(r.get("user_action")) for r in records)
 
 
 def tag_counter(records: list[dict[str, Any]]) -> collections.Counter[str]:
     counter: collections.Counter[str] = collections.Counter()
     for rec in records:
         for tag in rec.get("tags") or []:
-            if clean(tag):
-                counter[clean(tag)] += 1
+            if clean_text(tag):
+                counter[clean_text(tag)] += 1
     return counter
 
 
 def title_patterns(records: list[dict[str, Any]]) -> collections.Counter[str]:
     counter: collections.Counter[str] = collections.Counter()
     for rec in records:
-        title = clean(rec.get("title"))
+        title = clean_text(rec.get("title"))
         for token in title.replace(":", " ").replace("-", " ").split():
             token = token.strip(",.()[]").lower()
             if len(token) >= 6:
@@ -55,15 +49,15 @@ def title_patterns(records: list[dict[str, Any]]) -> collections.Counter[str]:
 
 
 def recommendation_precision(records: list[dict[str, Any]]) -> tuple[int, int]:
-    must = [r for r in records if clean(r.get("system_decision")) == "必读"]
-    positive = [r for r in must if clean(r.get("user_action")) in POSITIVE_ACTIONS]
+    must = [r for r in records if clean_text(r.get("system_decision")) == "必读"]
+    positive = [r for r in must if clean_text(r.get("user_action")) in POSITIVE_ACTIONS]
     return len(positive), len(must)
 
 
 def numeric_ratings(records: list[dict[str, Any]]) -> list[float]:
     ratings = []
     for record in records:
-        value = clean(record.get("user_rating"))
+        value = clean_text(record.get("user_rating"))
         if not value or value == "pending":
             continue
         try:
@@ -75,7 +69,7 @@ def numeric_ratings(records: list[dict[str, Any]]) -> list[float]:
 
 def record_date(record: dict[str, Any]) -> dt.date | None:
     try:
-        return dt.date.fromisoformat(clean(record.get("date")))
+        return dt.date.fromisoformat(clean_text(record.get("date")))
     except ValueError:
         return None
 
@@ -98,10 +92,10 @@ def filter_records(records: list[dict[str, Any]], date: dt.date, scope: str) -> 
 def evidence_examples(records: list[dict[str, Any]], tag: str, limit: int = 2) -> str:
     matches = []
     for record in records:
-        if tag in {clean(t) for t in record.get("tags") or []}:
-            feedback = clean(record.get("user_feedback"))
+        if tag in {clean_text(t) for t in record.get("tags") or []}:
+            feedback = clean_text(record.get("user_feedback"))
             suffix = f": {feedback}" if feedback and feedback != "pending" else ""
-            matches.append(f"{clean(record.get('date'))} {clean(record.get('canonical_id'))}{suffix}")
+            matches.append(f"{clean_text(record.get('date'))} {clean_text(record.get('canonical_id'))}{suffix}")
         if len(matches) >= limit:
             break
     return "; ".join(matches)
@@ -109,8 +103,8 @@ def evidence_examples(records: list[dict[str, Any]], tag: str, limit: int = 2) -
 
 def build_report(records: list[dict[str, Any]], total_records: int, min_feedback: int, date: dt.date, scope: str) -> str:
     year, week, _ = date.isocalendar()
-    positives = [r for r in records if clean(r.get("user_action")) in POSITIVE_ACTIONS]
-    negatives = [r for r in records if clean(r.get("user_action")) in NEGATIVE_ACTIONS]
+    positives = [r for r in records if clean_text(r.get("user_action")) in POSITIVE_ACTIONS]
+    negatives = [r for r in records if clean_text(r.get("user_action")) in NEGATIVE_ACTIONS]
     ratings = numeric_ratings(records)
     pos, total_must = recommendation_precision(records)
     lines = [

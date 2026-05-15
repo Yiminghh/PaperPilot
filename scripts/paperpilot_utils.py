@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import html
 import re
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,7 @@ def clean_text(value: Any) -> str:
         return ""
     if isinstance(value, list):
         return ", ".join(str(x) for x in value)
-    return re.sub(r"\s+", " ", str(value)).strip()
+    return re.sub(r"\s+", " ", html.unescape(str(value))).strip()
 
 
 def load_json(path: Path, default: Any = None) -> Any:

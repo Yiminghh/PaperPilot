@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import html
 import io
 import re
 import time
@@ -14,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from config_utils import DEFAULT_CONFIG, load_config, run_dir
-from paperpilot_utils import candidate_map, canonical_to_arxiv_id, load_json, write_json
+from paperpilot_utils import candidate_map, canonical_to_arxiv_id, clean_text, load_json, write_json
 
 
 SECTION_ALIASES = {
@@ -24,13 +23,6 @@ SECTION_ALIASES = {
     "experiments": ("experiment", "experiments", "evaluation", "results", "benchmark"),
     "limitations": ("limitation", "limitations", "discussion", "conclusion"),
 }
-
-
-def clean_text(value: str) -> str:
-    value = html.unescape(value)
-    value = re.sub(r"\s+", " ", value)
-    return value.strip()
-
 
 class SimplePaperHTMLParser(HTMLParser):
     def __init__(self) -> None:

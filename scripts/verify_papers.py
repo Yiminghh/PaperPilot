@@ -8,6 +8,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -87,7 +88,7 @@ def verify_papers(payload: dict[str, Any], trust_arxiv_source: bool, timeout: in
             arxiv_error = f"{type(exc).__name__}: {exc}"
 
     results = []
-    summary = {"verified": 0, "unverified": 0, "verify_pending": 0, "conflict": 0}
+    summary: Counter[str] = Counter()
     for paper in papers:
         cid = paper.get("canonical_id", "")
         title = paper.get("title", "")
@@ -144,7 +145,7 @@ def verify_papers(payload: dict[str, Any], trust_arxiv_source: bool, timeout: in
                 "verification": verification,
             }
         )
-    return results, summary
+    return results, {key: summary.get(key, 0) for key in ("verified", "unverified", "verify_pending", "conflict")}
 
 
 def main() -> int:

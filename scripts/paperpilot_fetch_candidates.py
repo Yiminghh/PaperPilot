@@ -16,7 +16,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from config_utils import DEFAULT_CONFIG, config_value, load_config, project_root, resolve_path
+from config_utils import DEFAULT_CONFIG, load_config, project_root, resolve_path
 from paperpilot_utils import canonical_arxiv_id, clean_text, normalize_title, project_path_arg, write_json
 
 
@@ -24,6 +24,80 @@ ARXIV_API = "https://export.arxiv.org/api/query"
 ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
 ARXIV_NS = {"arxiv": "http://arxiv.org/schemas/atom"}
 TOKEN_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9\-]+")
+MOLECULAR_CONTEXT_TERMS = ["molecule", "molecular", "protein", "rna", "drug", "material"]
+CATEGORY_POLICY_RULES = {
+    "only_keep_if_llm_or_foundation_model_relevant_to_science_or_graphs": [
+        [
+            "large language model",
+            "llm",
+            "foundation model",
+            "agent",
+            "retrieval augmented",
+            "rag",
+            "transformer",
+        ],
+        [
+            "science",
+            "scientific",
+            "graph",
+            "molecular",
+            "molecule",
+            "protein",
+            "rna",
+            "biomolecule",
+            "chemistry",
+            "biology",
+            "biomedical",
+            "clinical",
+        ],
+    ],
+    "only_keep_if_geometric_3d_scientific_or_molecular_relevant": [
+        [
+            "3d",
+            "point cloud",
+            "mesh",
+            "geometric deep learning",
+            "molecular",
+            "molecule",
+            "protein",
+            "rna",
+            "biomolecule",
+            "chemistry",
+            "scientific",
+            "medical",
+            "clinical",
+            "microscopy",
+            "cryo",
+            "cell",
+            "biological",
+            "material",
+            "drug",
+        ],
+    ],
+    "keep_if_ai4science_or_representation_learning_relevant": [
+        [
+            "machine learning",
+            "deep learning",
+            "neural",
+            "foundation model",
+            "language model",
+            "representation",
+            "prediction",
+            "predicting",
+            "predict",
+            "generative",
+            "diffusion",
+            "graph",
+            "transformer",
+            "embedding",
+            "qsar",
+            "clustering",
+            "classification",
+            "regression",
+            "classifier",
+        ],
+    ],
+}
 
 
 def load_yaml_file(path: Path) -> dict[str, Any]:
@@ -221,14 +295,19 @@ def text_for_retrieval(paper: dict[str, Any]) -> str:
     return f"{paper.get('title', '')} {paper.get('abstract', '')} {cats}"
 
 
+def has_molecular_context(text: str) -> bool:
+    return any(key in text for key in MOLECULAR_CONTEXT_TERMS)
+
+
+def should_skip_negative_term(term: str, text: str) -> bool:
+    return term == "quantum chemistry" and has_molecular_context(text)
+
+
 def is_excluded(paper: dict[str, Any], hard_terms: list[str]) -> tuple[bool, str]:
     text = text_for_retrieval(paper).lower()
-    molecular_context = any(
-        key in text for key in ["molecule", "molecular", "protein", "rna", "drug", "material"]
-    )
     for term in hard_terms:
         if term and term in text:
-            if term == "quantum chemistry" and molecular_context:
+            if should_skip_negative_term(term, text):
                 return False, ""
             return True, term
     return False, ""
@@ -251,83 +330,12 @@ def category_policy_reason(paper: dict[str, Any], policies: dict[str, str]) -> s
     for selector, policy in policies.items():
         if not any(category == selector or category.startswith(f"{selector}.") for category in categories):
             continue
-        if policy == "only_keep_if_llm_or_foundation_model_relevant_to_science_or_graphs":
-            llm_terms = [
-                "large language model",
-                " llm ",
-                "foundation model",
-                "agent",
-                "retrieval-augmented",
-                "rag",
-                "transformer",
-            ]
-            context_terms = [
-                "science",
-                "scientific",
-                "graph",
-                "molecular",
-                "molecule",
-                "protein",
-                "rna",
-                "biomolecule",
-                "chemistry",
-                "biology",
-                "biomedical",
-                "clinical",
-            ]
-            if has_any(f" {text} ", llm_terms) and has_any(text, context_terms):
-                continue
-            return policy
-        if policy == "only_keep_if_geometric_3d_scientific_or_molecular_relevant":
-            keep_terms = [
-                "3d",
-                "point cloud",
-                "mesh",
-                "geometric deep learning",
-                "molecular",
-                "molecule",
-                "protein",
-                "rna",
-                "biomolecule",
-                "chemistry",
-                "scientific",
-                "medical",
-                "clinical",
-                "microscopy",
-                "cryo",
-                "cell",
-                "biological",
-                "material",
-                "drug",
-            ]
-            if has_any(text, keep_terms):
-                continue
-            return policy
-        if policy == "keep_if_ai4science_or_representation_learning_relevant":
-            ai_terms = [
-                "machine learning",
-                "deep learning",
-                "neural",
-                "foundation model",
-                "language model",
-                "representation",
-                "prediction",
-                "predicting",
-                "predict",
-                "generative",
-                "diffusion",
-                "graph",
-                "transformer",
-                "embedding",
-                "qsar",
-                "clustering",
-                "classification",
-                "regression",
-                "classifier",
-            ]
-            if has_any(text, ai_terms):
-                continue
-            return policy
+        term_groups = CATEGORY_POLICY_RULES.get(policy)
+        if not term_groups:
+            continue
+        if all(has_any(text, terms) for terms in term_groups):
+            continue
+        return policy
     return ""
 
 
@@ -410,7 +418,7 @@ def api_embeddings(texts: list[str], embed_conf: dict[str, Any]) -> list[list[fl
     )
     if not model_name:
         raise SystemExit("Embedding provider 'api' requires PAPERPILOT_EMBED_MODEL or embedding.model.")
-    batch_size = int(embed_conf.get("api_batch_size") or embed_conf.get("batch_size") or 64)
+    batch_size = int(embed_conf.get("batch_size") or 64)
     url = embedding_api_url(base_url)
     headers = {"Content-Type": "application/json"}
     if api_key:
@@ -538,13 +546,10 @@ def apply_priority_boost(paper: dict[str, Any], score: float, boosts: dict[str, 
 def matched_soft_downweight_terms(paper: dict[str, Any], soft_terms: list[str]) -> list[str]:
     text = text_for_retrieval(paper).lower()
     matched = []
-    molecular_context = any(
-        key in text for key in ["molecule", "molecular", "protein", "rna", "drug", "material"]
-    )
     for term in soft_terms:
         if not term or term not in text:
             continue
-        if term == "quantum chemistry" and molecular_context:
+        if should_skip_negative_term(term, text):
             continue
         matched.append(term)
     return matched
@@ -631,66 +636,24 @@ def main() -> int:
     arxiv_conf = config.get("arxiv") or {}
     retrieval_conf = config.get("retrieval") or {}
     embed_conf = config.get("embedding") or {}
-    for key in (
-        "bm25_top_k",
-        "embedding_top_k",
-        "embedding_min_score",
-        "final_top_k",
-        "rrf_k",
-        "matched_queries_per_paper",
-        "soft_downweight_multiplier",
-    ):
-        retrieval_conf[key] = config_value(config, f"retrieval.{key}", retrieval_conf.get(key))
-    for key in (
-        "provider",
-        "model",
-        "device",
-        "batch_size",
-        "query_prefix",
-        "document_prefix",
-        "normalize_embeddings",
-        "api_base_url",
-        "api_key_env",
-        "api_model",
-        "api_batch_size",
-        "api_timeout_seconds",
-    ):
-        embed_conf[key] = config_value(config, f"embedding.{key}", embed_conf.get(key))
-    embed_alias_env = {
-        "model": "PAPERPILOT_EMBED_MODEL",
-        "device": "PAPERPILOT_EMBED_DEVICE",
-        "batch_size": "PAPERPILOT_EMBED_BATCH_SIZE",
-        "api_model": "PAPERPILOT_EMBED_MODEL",
-        "api_base_url": "PAPERPILOT_EMBED_BASE_URL",
-    }
-    for key, env_name in embed_alias_env.items():
-        if os.getenv(env_name) is not None:
-            embed_conf[key] = os.getenv(env_name)
-    if embed_conf.get("cache_dir") or config_value(config, "paths.hf_cache_dir"):
-        cache_default = str(config_value(config, "paths.hf_cache_dir", ".cache/huggingface"))
-        embed_conf["cache_dir"] = str(resolve_path(config, "embedding.cache_dir", cache_default))
+    if embed_conf.get("cache_dir"):
+        embed_conf["cache_dir"] = str(resolve_path(config, "embedding.cache_dir", ".cache/huggingface"))
     categories = [str(x) for x in arxiv_conf.get("categories", [])]
-    max_results = args.max_results or int(config_value(config, "arxiv.max_results", arxiv_conf.get("max_results") or 300))
-    days_window = args.days_window or int(config_value(config, "arxiv.days_window", arxiv_conf.get("days_window") or 3))
-    retries = args.arxiv_retries if args.arxiv_retries != 3 else int(
-        config_value(config, "arxiv.retries", arxiv_conf.get("retries") or 3)
-    )
-    timeout = args.arxiv_timeout if args.arxiv_timeout != 30 else int(
-        config_value(config, "arxiv.timeout_seconds", arxiv_conf.get("timeout_seconds") or 30)
-    )
-    if (
-        "PAPERPILOT_ARXIV_CATEGORY_DELAY" not in os.environ
-        and config_value(config, "arxiv.category_delay_seconds", arxiv_conf.get("category_delay_seconds")) is not None
-    ):
-        os.environ["PAPERPILOT_ARXIV_CATEGORY_DELAY"] = str(
-            config_value(config, "arxiv.category_delay_seconds", arxiv_conf.get("category_delay_seconds"))
-        )
+    max_results = args.max_results or int(arxiv_conf.get("max_results") or 300)
+    days_window = args.days_window or int(arxiv_conf.get("days_window") or 3)
+    retries = args.arxiv_retries if args.arxiv_retries != 3 else int(arxiv_conf.get("retries") or 3)
+    timeout = args.arxiv_timeout if args.arxiv_timeout != 30 else int(arxiv_conf.get("timeout_seconds") or 30)
+    if "PAPERPILOT_ARXIV_CATEGORY_DELAY" not in os.environ and arxiv_conf.get("category_delay_seconds") is not None:
+        os.environ["PAPERPILOT_ARXIV_CATEGORY_DELAY"] = str(arxiv_conf.get("category_delay_seconds"))
     provider = args.embedding_provider or str(embed_conf.get("provider") or "local")
-    embedding_model_label = (
-        os.getenv("PAPERPILOT_EMBED_MODEL")
-        or os.getenv("EMBED_MODEL")
-        or str(embed_conf.get("api_model") or embed_conf.get("model") or "")
-    )
+    if provider == "api":
+        embedding_model_label = (
+            os.getenv("PAPERPILOT_EMBED_MODEL")
+            or os.getenv("EMBED_MODEL")
+            or str(embed_conf.get("api_model") or embed_conf.get("model") or "")
+        )
+    else:
+        embedding_model_label = str(embed_conf.get("model") or "")
     queries = flatten_interest(interest)
     hard_exclude = [str(x).lower() for x in negative.get("hard_exclude", []) or []]
     soft_downweight = [str(x).lower() for x in negative.get("soft_downweight", []) or []]
@@ -733,17 +696,17 @@ def main() -> int:
         filtered.append(paper)
 
     print(f"[paperpilot] recent={len(papers)} after_seen_and_exclude={len(filtered)}", flush=True)
-    bm25 = bm25_scores(filtered, queries, top_k=int(config_value(config, "retrieval.bm25_top_k", 50)))
+    bm25 = bm25_scores(filtered, queries, top_k=int(retrieval_conf.get("bm25_top_k") or 50))
     emb = embedding_scores(
         filtered,
         queries,
         provider=provider,
         embed_conf=embed_conf,
-        top_k=int(config_value(config, "retrieval.embedding_top_k", 40)),
-        min_score=float(config_value(config, "retrieval.embedding_min_score", 0.0)),
+        top_k=int(retrieval_conf.get("embedding_top_k") or 40),
+        min_score=float(retrieval_conf.get("embedding_min_score") or 0.0),
     )
     ranked = rrf_rank(filtered, bm25, emb, retrieval_conf, soft_downweight_terms=soft_downweight)
-    final_k = int(config_value(config, "retrieval.final_top_k", 100))
+    final_k = int(retrieval_conf.get("final_top_k") or 100)
     candidates = ranked[:final_k]
     payload = {
         "date": str(today),

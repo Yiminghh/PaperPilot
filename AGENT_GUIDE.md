@@ -43,6 +43,11 @@ raw.json -> candidates.json -> initial review.json -> enriched.json -> final rev
 - Do not imply full-paper reading when only title and abstract were used.
 - Do not call the Plato API or hidden remote embedding endpoints.
 - Keep the system usable with Codex only; do not require Claude Code.
+- Use Obsidian callouts sparingly: only the core block of each deep-dive paper should use a callout. Keep overview, run info, recommendation fields, trends, and follow-ups as plain Markdown.
+- Do not render a quick navigation table or a separate "read these first" section; the deep-dive order is the reading priority.
+- In deep-dive Markdown, do not add a blank line between bold field headings and their content. Use a single newline.
+- Prefix paper headings with simple numeric indexes, such as `### 1. Paper Title`.
+- `state/seen-papers.txt` should mark papers that actually appear in the rendered review, not every raw candidate.
 
 ## Manual Feedback Contract
 

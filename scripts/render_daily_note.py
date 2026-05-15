@@ -18,15 +18,9 @@ SECTION_TITLES = {
     "skip": "跳过",
 }
 
-SECTION_CALLOUTS = {
-    "must_read": "tip",
-    "worth_reading": "note",
-    "later": "question",
-    "skip": "warning",
-}
 
 def validate_review(review: dict[str, Any], schema_path: Path) -> None:
-    schema = load_json(schema_path)
+    schema = load_required_json(schema_path, "review schema")
     try:
         import jsonschema
     except ImportError:
@@ -35,6 +29,12 @@ def validate_review(review: dict[str, Any], schema_path: Path) -> None:
             raise SystemExit(f"review.json missing required keys: {missing}")
         return
     jsonschema.validate(review, schema)
+
+
+def load_required_json(path: Path, label: str) -> Any:
+    if not path.exists():
+        raise SystemExit(f"{label} not found: {path}")
+    return load_json(path)
 
 
 def verification_status(paper: dict[str, Any]) -> str:
@@ -71,8 +71,15 @@ def validate_review_against_candidates(review: dict[str, Any], candidates: dict[
                 errors.append(f"{cid}: verification conflict; do not render conflicted papers")
             if section == "must_read" and status != "verified":
                 errors.append(f"{cid}: must_read requires verification.status=verified, got {status}")
+    seen_deep_ids: set[str] = set()
     for item in review.get("deep_dives") or []:
         cid = text(item.get("canonical_id"))
+        if not cid:
+            errors.append("deep_dives: missing canonical_id")
+            continue
+        if cid in seen_deep_ids:
+            errors.append(f"{cid}: duplicate deep_dive")
+        seen_deep_ids.add(cid)
         if cid and cid not in must_ids:
             errors.append(f"{cid}: deep_dive must correspond to a must_read paper")
     if errors:
@@ -87,10 +94,6 @@ def text(value: Any) -> str:
     return str(value).strip()
 
 
-def table_text(value: Any) -> str:
-    return text(value).replace("\n", " ").replace("|", "\\|")
-
-
 def bullet_lines(values: list[Any]) -> list[str]:
     cleaned = [text(v) for v in values if text(v)]
     if not cleaned:
@@ -98,51 +101,50 @@ def bullet_lines(values: list[Any]) -> list[str]:
     return [f"- {value}" for value in cleaned]
 
 
-def callout(kind: str, title: str, body: str | list[str], folded: bool = False) -> list[str]:
-    marker = "-" if folded else ""
-    lines = [f"> [!{kind}]{marker} {title}"]
-    body_lines = body.splitlines() if isinstance(body, str) else body
-    if not body_lines:
-        body_lines = ["无。"]
-    for line in body_lines:
+def list_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [text(item) for item in value if text(item)]
+    cleaned = text(value)
+    return [cleaned] if cleaned else []
+
+
+def format_tags(value: Any) -> str:
+    return ", ".join(list_values(value))
+
+
+def paper_view(item: dict[str, Any], candidates: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    cid = text(item.get("canonical_id"))
+    meta = candidates.get(cid, {})
+    return {
+        "cid": cid,
+        "title": text(item.get("title") or meta.get("title") or cid),
+        "url": text(item.get("url") or meta.get("url")),
+        "tags": item.get("tags") or meta.get("tags") or [],
+        "meta": meta,
+    }
+
+
+def core_callout(body: list[str]) -> list[str]:
+    lines = ["> [!tip] 核心内容"]
+    for line in body or ["无。"]:
         lines.append(f"> {line}" if line else ">")
     return lines
+
+
+def add_field(lines: list[str], heading: str, body: Any) -> None:
+    lines.extend(["", f"**{heading}**"])
+    if isinstance(body, list):
+        lines.extend(body or ["- 无。"])
+    else:
+        lines.append(text(body) or "无。")
 
 
 def existing_feedback_map(note_path: Path) -> dict[str, dict[str, Any]]:
     if not note_path.exists():
         return {}
     return {rec["canonical_id"]: rec for rec in parse_note(note_path, include_pending=False)}
-
-
-def render_quick_nav(review: dict[str, Any]) -> list[str]:
-    lines = [
-        "| 优先级 | 论文 | 方向 | 建议动作 |",
-        "|---|---|---|---|",
-    ]
-    for key, heading in SECTION_TITLES.items():
-        for item in review.get(key) or []:
-            title = table_text(item.get("title"))
-            url = text(item.get("url"))
-            paper = f"[{title}]({url})" if url else title
-            tags = table_text(item.get("tags") or [])
-            action = table_text(item.get("suggested_action"))
-            lines.append(f"| {heading} | {paper} | {tags} | {action} |")
-    return lines
-
-
-def render_read_first(review: dict[str, Any]) -> list[str]:
-    items = (review.get("must_read") or [])[:3]
-    if not items:
-        return ["无。"]
-    lines = []
-    for idx, item in enumerate(items, start=1):
-        title = text(item.get("title"))
-        url = text(item.get("url"))
-        one_sentence = text(item.get("one_sentence"))
-        paper = f"[{title}]({url})" if url else title
-        lines.append(f"{idx}. **{paper}**：{one_sentence}")
-    return lines
 
 
 def render_run_info(candidates: dict[str, Any]) -> list[str]:
@@ -163,64 +165,41 @@ def render_run_info(candidates: dict[str, Any]) -> list[str]:
     skipped = candidates.get("skipped_categories") or []
     if skipped:
         body.append(f"- 跳过类目：{text(skipped)}")
-    return callout("info", "运行信息", body, folded=True)
+    return body or ["- 无。"]
 
 
-def render_deep_dive(item: dict[str, Any], candidates: dict[str, dict[str, Any]]) -> str:
-    cid = text(item.get("canonical_id"))
-    meta = candidates.get(cid, {})
-    title = text(item.get("title") or meta.get("title") or cid)
-    url = text(item.get("url") or meta.get("url"))
-    tags = item.get("tags") or meta.get("tags") or []
+def render_deep_dive(item: dict[str, Any], candidates: dict[str, dict[str, Any]], index: int) -> str:
+    paper = paper_view(item, candidates)
     lines = [
-        f"### {title}",
+        f"### {index}. {paper['title']}",
         "",
-        f"- canonical_id:: {cid}",
-        f"- url:: {url}",
+        f"- canonical_id:: {paper['cid']}",
+        f"- url:: {paper['url']}",
         f"- source_basis:: {text(item.get('source_basis') or 'title+abstract')}",
     ]
+    tags = format_tags(paper["tags"])
     if tags:
-        lines.append(f"- tags:: {', '.join(str(t) for t in tags)}")
+        lines.append(f"- tags:: {tags}")
     lines.append("")
-    lines.extend(callout("tip", "TL;DR", text(item.get("tldr"))))
-    lines.append("")
-    lines.extend(callout("note", "中文摘要", text(item.get("summary_zh"))))
-    lines.append("")
-    method_body = [
-        "**研究问题**",
-        text(item.get("problem")) or "无。",
-        "",
-        "**方法拆解**",
-        text(item.get("method")) or "无。",
-        "",
-        "**核心创新**",
-        *bullet_lines(item.get("core_innovations") or []),
-    ]
-    lines.extend(callout("example", "问题与方法", method_body))
-    lines.append("")
-    evidence_body = [
-        "**实验与证据**",
-        *bullet_lines(item.get("evidence") or []),
-        "",
-        "**局限性**",
-        *bullet_lines(item.get("limitations") or []),
-        "",
-        "**待核查问题**",
-        *bullet_lines(item.get("questions_to_check") or []),
-    ]
-    lines.extend(callout("warning", "证据、局限与待核查", evidence_body))
-    lines.append("")
-    idea_body = [
-        "**与当前研究的关系**",
-        text(item.get("relevance_to_me")) or "无。",
-        "",
-        "**可复用 idea**",
-        *bullet_lines(item.get("reusable_ideas") or []),
-        "",
-        "**阅读优先级**",
-        text(item.get("reading_priority")) or "无。",
-    ]
-    lines.extend(callout("abstract", "对我的价值", idea_body))
+    lines.extend(
+        core_callout(
+            [
+                f"**TL;DR**：{text(item.get('tldr')) or '无。'}",
+                "",
+                f"**对我的价值**：{text(item.get('relevance_to_me')) or '无。'}",
+                "",
+                f"**阅读优先级**：{text(item.get('reading_priority')) or '无。'}",
+            ]
+        )
+    )
+    add_field(lines, "中文摘要", item.get("summary_zh"))
+    add_field(lines, "研究问题", item.get("problem"))
+    add_field(lines, "方法拆解", item.get("method"))
+    add_field(lines, "核心创新", bullet_lines(item.get("core_innovations") or []))
+    add_field(lines, "实验与证据", bullet_lines(item.get("evidence") or []))
+    add_field(lines, "局限性", bullet_lines(item.get("limitations") or []))
+    add_field(lines, "可复用 idea", bullet_lines(item.get("reusable_ideas") or []))
+    add_field(lines, "待核查问题", bullet_lines(item.get("questions_to_check") or []))
     return "\n".join(lines).strip() + "\n"
 
 
@@ -229,61 +208,47 @@ def render_item(
     candidates: dict[str, dict[str, Any]],
     section: str,
     existing_feedback: dict[str, dict[str, Any]],
+    index: int,
 ) -> str:
-    cid = text(item.get("canonical_id"))
-    meta = candidates.get(cid, {})
-    feedback = existing_feedback.get(cid, {})
+    paper = paper_view(item, candidates)
+    meta = paper["meta"]
+    feedback = existing_feedback.get(paper["cid"], {})
     action_value = text(feedback.get("user_action") or "pending")
     rating_value = text(feedback.get("user_rating") or "pending")
     feedback_value = text(feedback.get("user_feedback") or "pending")
-    title = text(item.get("title") or meta.get("title") or cid)
-    url = text(item.get("url") or meta.get("url"))
     source = text(meta.get("source") or "arxiv")
     decision = text(item.get("decision") or SECTION_TITLES.get(section, section))
-    tags = item.get("tags") or []
     lines = [
-        f"### {title}",
+        f"### {index}. {paper['title']}",
         "",
         f"- source:: {source}",
-        f"- canonical_id:: {cid}",
-        f"- url:: {url}",
+        f"- canonical_id:: {paper['cid']}",
+        f"- url:: {paper['url']}",
         f"- decision:: {decision}",
         f"- action:: {action_value}",
         f"- rating:: {rating_value}",
         f"- feedback:: {feedback_value}",
     ]
+    tags = format_tags(paper["tags"])
     if tags:
-        lines.append(f"- tags:: {', '.join(str(t) for t in tags)}")
-    lines.append("")
-    lines.extend(callout(SECTION_CALLOUTS.get(section, "note"), "一句话结论", text(item.get("one_sentence"))))
-    lines.append("")
-    lines.extend(callout("note", "推荐理由", text(item.get("reason"))))
-    lines.append("")
-    lines.extend(callout("abstract", "与当前研究的关系", text(item.get("relevance"))))
+        lines.append(f"- tags:: {tags}")
+    add_field(lines, "一句话结论", item.get("one_sentence"))
+    add_field(lines, "推荐理由", item.get("reason"))
+    add_field(lines, "与当前研究的关系", item.get("relevance"))
     reusable = text(item.get("reusable_idea"))
     if reusable:
-        lines.append("")
-        lines.extend(callout("example", "可复用 idea", reusable, folded=True))
+        add_field(lines, "可复用 idea", reusable)
     uncertainty = text(item.get("uncertainty"))
     if uncertainty:
-        lines.append("")
-        lines.extend(callout("warning", "不确定点", uncertainty, folded=True))
+        add_field(lines, "不确定点", uncertainty)
     action = text(item.get("suggested_action"))
     if action:
-        lines.append("")
-        lines.extend(callout("todo", "建议动作", action))
+        add_field(lines, "建议动作", action)
     return "\n".join(lines).strip() + "\n"
 
 
-def render_note(
-    review: dict[str, Any],
-    candidates: dict[str, Any],
-    date: str,
-    existing_feedback: dict[str, dict[str, Any]] | None = None,
-) -> str:
-    cmap = candidate_map(candidates)
-    existing_feedback = existing_feedback or {}
-    lines = [
+def render_overview(review: dict[str, Any], candidates: dict[str, Any], date: str) -> list[str]:
+    return [
         "---",
         f"date: {date}",
         "type: paper-daily",
@@ -298,73 +263,90 @@ def render_note(
         "",
         "## 总览",
         "",
+        text(review.get("summary")) or "无。",
+        "",
+        "### 运行信息",
+        "",
+        *render_run_info(candidates),
+        "",
     ]
-    lines.extend(callout("abstract", "今日结论", text(review.get("summary"))))
-    lines.append("")
-    lines.extend(render_run_info(candidates))
-    lines.extend(
-        [
-            "",
-            "## 快速导航",
-            "",
-            *render_quick_nav(review),
-            "",
-            "## 先读这几篇",
-            "",
-            *render_read_first(review),
-            "",
-        ]
-    )
-    deep_dives = review.get("deep_dives") or []
-    if deep_dives:
-        lines.extend(["## 重点论文深读", ""])
-        for item in deep_dives:
-            lines.append(render_deep_dive(item, cmap))
-    lines.extend(
-        [
-            "## 分档推荐",
-            "",
-        ]
-    )
+
+
+def render_deep_dives(review: dict[str, Any], cmap: dict[str, dict[str, Any]]) -> list[str]:
+    items = review.get("deep_dives") or []
+    if not items:
+        return []
+    lines = ["## 重点论文深读", ""]
+    for index, item in enumerate(items, start=1):
+        lines.append(render_deep_dive(item, cmap, index))
+    return lines
+
+
+def render_ranked_sections(
+    review: dict[str, Any],
+    cmap: dict[str, dict[str, Any]],
+    existing_feedback: dict[str, dict[str, Any]],
+) -> list[str]:
+    lines = ["## 分档推荐", ""]
     for key, heading in SECTION_TITLES.items():
         lines.extend([f"## {heading}", ""])
         items = review.get(key) or []
         if not items:
             lines.extend(["无。", ""])
             continue
-        for item in items:
-            lines.append(render_item(item, cmap, key, existing_feedback))
-    trends = review.get("trend_observations") or []
-    lines.extend(["## 今日趋势", ""])
-    if trends:
-        lines.extend(callout("summary", "趋势观察", bullet_lines(trends)))
-    else:
-        lines.append("无。")
+        for index, item in enumerate(items, start=1):
+            lines.append(render_item(item, cmap, key, existing_feedback, index))
+    return lines
+
+
+def render_list_section(title: str, values: list[Any]) -> list[str]:
+    lines = [f"## {title}", ""]
+    lines.extend(bullet_lines(values) if values else ["无。"])
     lines.append("")
-    followups = review.get("tomorrow_followups") or []
-    lines.extend(["## 明日跟进", ""])
-    if followups:
-        lines.extend(callout("todo", "下一步", bullet_lines(followups)))
-    else:
-        lines.append("无。")
-    lines.append("")
+    return lines
+
+
+def render_note(
+    review: dict[str, Any],
+    candidates: dict[str, Any],
+    date: str,
+    existing_feedback: dict[str, dict[str, Any]] | None = None,
+) -> str:
+    cmap = candidate_map(candidates)
+    lines = render_overview(review, candidates, date)
+    lines.extend(render_deep_dives(review, cmap))
+    lines.extend(
+        render_ranked_sections(
+            review,
+            cmap,
+            existing_feedback or {},
+        )
+    )
+    lines.extend(render_list_section("今日趋势", review.get("trend_observations") or []))
+    lines.extend(render_list_section("明日跟进", review.get("tomorrow_followups") or []))
     return "\n".join(lines)
 
 
-def update_seen(review: dict[str, Any], candidates: dict[str, Any], seen_path: Path) -> None:
-    seen_path.parent.mkdir(parents=True, exist_ok=True)
-    existing = set()
-    if seen_path.exists():
-        existing = {line.strip() for line in seen_path.read_text(encoding="utf-8").splitlines() if line.strip()}
-    for paper in candidates.get("candidates", []) or []:
-        cid = text(paper.get("canonical_id"))
-        if cid:
-            existing.add(cid)
+def reviewed_ids(review: dict[str, Any]) -> set[str]:
+    seen = set()
     for key in SECTION_TITLES:
         for item in review.get(key) or []:
             cid = text(item.get("canonical_id"))
             if cid:
-                existing.add(cid)
+                seen.add(cid)
+    for item in review.get("deep_dives") or []:
+        cid = text(item.get("canonical_id"))
+        if cid:
+            seen.add(cid)
+    return seen
+
+
+def update_seen(review: dict[str, Any], seen_path: Path) -> None:
+    seen_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = set()
+    if seen_path.exists():
+        existing = {line.strip() for line in seen_path.read_text(encoding="utf-8").splitlines() if line.strip()}
+    existing.update(reviewed_ids(review))
     seen_path.write_text("\n".join(sorted(existing)) + ("\n" if existing else ""), encoding="utf-8")
 
 
@@ -393,8 +375,8 @@ def main() -> int:
         schema_path = project_root() / schema_path
     output_dir = Path(args.output_dir).expanduser() if args.output_dir else resolve_path(config, "paths.paperflow_root")
     out_path = output_dir / "Paper-Daily" / date[:4] / f"{date}-paper-codex.md"
-    review = load_json(review_path)
-    candidates = load_json(candidates_path)
+    review = load_required_json(review_path, "review")
+    candidates = load_required_json(candidates_path, "candidates")
     validate_review(review, schema_path)
     validate_review_against_candidates(review, candidates)
     note = render_note(review, candidates, date, existing_feedback=existing_feedback_map(out_path))
@@ -409,7 +391,7 @@ def main() -> int:
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(note, encoding="utf-8")
-    update_seen(review, candidates, seen_path)
+    update_seen(review, seen_path)
     if not args.skip_memory_update:
         try:
             from update_paper_memory import update_memory

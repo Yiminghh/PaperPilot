@@ -4,10 +4,8 @@ project:
 
 paths:
   project_root: /Users/hym/PycharmProjects/PaperPilot
-  obsidian_root: /Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian
   paperflow_root: /Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian/3-PaperFlow
   daily_notes_dir: /Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian/3-PaperFlow/Paper-Daily
-  paper_notes_dir: /Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian/3-PaperFlow/Paper-Notes
   runs_dir: runs
   weekly_runs_dir: runs/weekly
   state_dir: state
@@ -45,7 +43,6 @@ embedding:
   api_base_url: ""
   api_key_env: PAPERPILOT_EMBED_API_KEY
   api_model: ""
-  api_batch_size: 64
   api_timeout_seconds: 60
 
 retrieval:
