@@ -27,6 +27,7 @@ def sample_candidates() -> dict:
                 "source": "arxiv",
                 "title": "Example Paper",
                 "url": "https://arxiv.org/abs/2605.12823",
+                "authors": ["Ada Lovelace", "Grace Hopper"],
                 "abstract": "A graph AI4Science paper.",
                 "categories": ["cs.LG"],
                 "verification": {"status": "verified"},
@@ -182,6 +183,18 @@ def test_render_note_omits_old_navigation_sections():
     assert "## 快速导航" not in note
     assert "## 先读这几篇" not in note
     assert "### 1. " in note
+
+
+def test_render_note_includes_authors_and_folded_english_abstract():
+    from paperpilot import render_daily_note
+
+    note = render_daily_note.render_note(sample_review(), sample_candidates(), "2026-05-15")
+    assert "- authors:: Ada Lovelace, Grace Hopper" in note
+    assert "- tags:: #graph, #AI4Science" in note
+    assert "<summary>英文摘要</summary>" in note
+    assert "A graph AI4Science paper." in note
+    assert note.index("**中文摘要**") < note.index("<summary>英文摘要</summary>")
+    assert note.index("</details>") < note.index("**研究问题**")
 
 
 def test_update_seen_marks_only_reviewed_papers(tmp_path):

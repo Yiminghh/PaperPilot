@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import html
 from pathlib import Path
 from typing import Any
 
@@ -106,6 +107,15 @@ def format_tags(value: Any) -> str:
     return ", ".join(list_values(value))
 
 
+def format_obsidian_tags(value: Any) -> str:
+    tags = []
+    for tag in list_values(value):
+        normalized = "-".join(tag.lstrip("#").split())
+        if normalized:
+            tags.append(f"#{normalized}")
+    return ", ".join(tags)
+
+
 def paper_view(item: dict[str, Any], candidates: dict[str, dict[str, Any]]) -> dict[str, Any]:
     cid = text(item.get("canonical_id"))
     meta = candidates.get(cid, {})
@@ -113,6 +123,8 @@ def paper_view(item: dict[str, Any], candidates: dict[str, dict[str, Any]]) -> d
         "cid": cid,
         "title": text(item.get("title") or meta.get("title") or cid),
         "url": text(item.get("url") or meta.get("url")),
+        "authors": item.get("authors") or meta.get("authors") or [],
+        "abstract": text(item.get("abstract") or meta.get("abstract")),
         "tags": item.get("tags") or meta.get("tags") or [],
         "meta": meta,
     }
@@ -131,6 +143,28 @@ def add_field(lines: list[str], heading: str, body: Any) -> None:
         lines.extend(body or ["- 无。"])
     else:
         lines.append(text(body) or "无。")
+
+
+def add_authors(lines: list[str], paper: dict[str, Any]) -> None:
+    authors = format_tags(paper.get("authors"))
+    if authors:
+        lines.append(f"- authors:: {authors}")
+
+
+def add_folded_english_abstract(lines: list[str], paper: dict[str, Any]) -> None:
+    abstract = text(paper.get("abstract"))
+    if abstract:
+        lines.extend(
+            [
+                "",
+                "<details>",
+                "<summary>英文摘要</summary>",
+                "",
+                html.escape(abstract),
+                "",
+                "</details>",
+            ]
+        )
 
 
 def existing_feedback_map(note_path: Path) -> dict[str, dict[str, Any]]:
@@ -169,7 +203,8 @@ def render_deep_dive(item: dict[str, Any], candidates: dict[str, dict[str, Any]]
         f"- url:: {paper['url']}",
         f"- source_basis:: {text(item.get('source_basis') or 'title+abstract')}",
     ]
-    tags = format_tags(paper["tags"])
+    add_authors(lines, paper)
+    tags = format_obsidian_tags(paper["tags"])
     if tags:
         lines.append(f"- tags:: {tags}")
     lines.append("")
@@ -185,6 +220,7 @@ def render_deep_dive(item: dict[str, Any], candidates: dict[str, dict[str, Any]]
         )
     )
     add_field(lines, "中文摘要", item.get("summary_zh"))
+    add_folded_english_abstract(lines, paper)
     add_field(lines, "研究问题", item.get("problem"))
     add_field(lines, "方法拆解", item.get("method"))
     add_field(lines, "核心创新", bullet_lines(item.get("core_innovations") or []))
@@ -221,9 +257,11 @@ def render_item(
         f"- rating:: {rating_value}",
         f"- feedback:: {feedback_value}",
     ]
-    tags = format_tags(paper["tags"])
+    add_authors(lines, paper)
+    tags = format_obsidian_tags(paper["tags"])
     if tags:
         lines.append(f"- tags:: {tags}")
+    add_folded_english_abstract(lines, paper)
     add_field(lines, "一句话结论", item.get("one_sentence"))
     add_field(lines, "推荐理由", item.get("reason"))
     add_field(lines, "与当前研究的关系", item.get("relevance"))
