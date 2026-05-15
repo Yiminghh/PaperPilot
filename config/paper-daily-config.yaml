@@ -1,7 +1,21 @@
 project:
   name: paperpilot
   timezone: Europe/London
-  output_dir: /Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian/3-PaperFlow
+
+paths:
+  project_root: /Users/hym/PycharmProjects/PaperPilot
+  obsidian_root: /Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian
+  paperflow_root: /Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian/3-PaperFlow
+  daily_notes_dir: /Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian/3-PaperFlow/Paper-Daily
+  paper_notes_dir: /Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian/3-PaperFlow/Paper-Notes
+  runs_dir: runs
+  weekly_runs_dir: runs/weekly
+  state_dir: state
+  logs_dir: logs
+  memory_dir: state/paper-memory
+  seen_path: state/seen-papers.txt
+  feedback_path: state/paper-feedback.jsonl
+  hf_cache_dir: .cache/huggingface
 
 arxiv:
   categories:
@@ -27,7 +41,12 @@ embedding:
   query_prefix: ""
   document_prefix: ""
   normalize_embeddings: true
-  cache_dir: /Users/hym/PycharmProjects/PaperPilot/.cache/huggingface
+  cache_dir: .cache/huggingface
+  api_base_url: ""
+  api_key_env: PAPERPILOT_EMBED_API_KEY
+  api_model: ""
+  api_batch_size: 64
+  api_timeout_seconds: 60
 
 retrieval:
   bm25_top_k: 50
@@ -36,6 +55,7 @@ retrieval:
   final_top_k: 100
   rrf_k: 60
   matched_queries_per_paper: 6
+  soft_downweight_multiplier: 0.75
   category_policy:
     cs.CL: only_keep_if_llm_or_foundation_model_relevant_to_science_or_graphs
     cs.CV: only_keep_if_geometric_3d_scientific_or_molecular_relevant
@@ -48,7 +68,3 @@ retrieval:
     generic_llm_without_science_or_graph: 0.6
     quantum_related: 0.0
     quantum_chemistry_with_molecular_ml: 0.7
-
-state:
-  seen_path: state/seen-papers.txt
-  feedback_path: state/paper-feedback.jsonl

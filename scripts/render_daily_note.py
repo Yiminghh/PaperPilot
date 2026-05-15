@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import json
 from pathlib import Path
 from typing import Any
+
+from config_utils import DEFAULT_CONFIG, load_config, project_root, resolve_path, run_dir
+from paperpilot_utils import candidate_map, load_json
+from sync_feedback_from_notes import parse_note
 
 
 SECTION_TITLES = {
@@ -22,12 +25,6 @@ SECTION_CALLOUTS = {
     "skip": "warning",
 }
 
-
-def load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
 def validate_review(review: dict[str, Any], schema_path: Path) -> None:
     schema = load_json(schema_path)
     try:
@@ -38,6 +35,48 @@ def validate_review(review: dict[str, Any], schema_path: Path) -> None:
             raise SystemExit(f"review.json missing required keys: {missing}")
         return
     jsonschema.validate(review, schema)
+
+
+def verification_status(paper: dict[str, Any]) -> str:
+    verification = paper.get("verification") or {}
+    status = text(verification.get("status"))
+    if status:
+        return status
+    cid = text(paper.get("canonical_id"))
+    if paper.get("source") == "arxiv" and cid.startswith("arxiv:"):
+        return "verified"
+    return "unverified"
+
+
+def validate_review_against_candidates(review: dict[str, Any], candidates: dict[str, Any]) -> None:
+    cmap = candidate_map(candidates)
+    errors = []
+    seen_review_ids: set[str] = set()
+    must_ids = {text(item.get("canonical_id")) for item in review.get("must_read") or []}
+    for section in SECTION_TITLES:
+        for item in review.get(section) or []:
+            cid = text(item.get("canonical_id"))
+            if not cid:
+                errors.append(f"{section}: missing canonical_id")
+                continue
+            if cid in seen_review_ids:
+                errors.append(f"{cid}: appears in multiple recommendation sections")
+            seen_review_ids.add(cid)
+            paper = cmap.get(cid)
+            if not paper:
+                errors.append(f"{cid}: review item is not present in candidates.json")
+                continue
+            status = verification_status(paper)
+            if status == "conflict":
+                errors.append(f"{cid}: verification conflict; do not render conflicted papers")
+            if section == "must_read" and status != "verified":
+                errors.append(f"{cid}: must_read requires verification.status=verified, got {status}")
+    for item in review.get("deep_dives") or []:
+        cid = text(item.get("canonical_id"))
+        if cid and cid not in must_ids:
+            errors.append(f"{cid}: deep_dive must correspond to a must_read paper")
+    if errors:
+        raise SystemExit("review/candidates validation failed:\n- " + "\n- ".join(errors))
 
 
 def text(value: Any) -> str:
@@ -70,8 +109,10 @@ def callout(kind: str, title: str, body: str | list[str], folded: bool = False) 
     return lines
 
 
-def candidate_map(candidates: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {p.get("canonical_id", ""): p for p in candidates.get("candidates", [])}
+def existing_feedback_map(note_path: Path) -> dict[str, dict[str, Any]]:
+    if not note_path.exists():
+        return {}
+    return {rec["canonical_id"]: rec for rec in parse_note(note_path, include_pending=False)}
 
 
 def render_quick_nav(review: dict[str, Any]) -> list[str]:
@@ -183,9 +224,18 @@ def render_deep_dive(item: dict[str, Any], candidates: dict[str, dict[str, Any]]
     return "\n".join(lines).strip() + "\n"
 
 
-def render_item(item: dict[str, Any], candidates: dict[str, dict[str, Any]], section: str) -> str:
+def render_item(
+    item: dict[str, Any],
+    candidates: dict[str, dict[str, Any]],
+    section: str,
+    existing_feedback: dict[str, dict[str, Any]],
+) -> str:
     cid = text(item.get("canonical_id"))
     meta = candidates.get(cid, {})
+    feedback = existing_feedback.get(cid, {})
+    action_value = text(feedback.get("user_action") or "pending")
+    rating_value = text(feedback.get("user_rating") or "pending")
+    feedback_value = text(feedback.get("user_feedback") or "pending")
     title = text(item.get("title") or meta.get("title") or cid)
     url = text(item.get("url") or meta.get("url"))
     source = text(meta.get("source") or "arxiv")
@@ -198,8 +248,9 @@ def render_item(item: dict[str, Any], candidates: dict[str, dict[str, Any]], sec
         f"- canonical_id:: {cid}",
         f"- url:: {url}",
         f"- decision:: {decision}",
-        "- action:: pending",
-        "- feedback:: pending",
+        f"- action:: {action_value}",
+        f"- rating:: {rating_value}",
+        f"- feedback:: {feedback_value}",
     ]
     if tags:
         lines.append(f"- tags:: {', '.join(str(t) for t in tags)}")
@@ -224,8 +275,14 @@ def render_item(item: dict[str, Any], candidates: dict[str, dict[str, Any]], sec
     return "\n".join(lines).strip() + "\n"
 
 
-def render_note(review: dict[str, Any], candidates: dict[str, Any], date: str) -> str:
+def render_note(
+    review: dict[str, Any],
+    candidates: dict[str, Any],
+    date: str,
+    existing_feedback: dict[str, dict[str, Any]] | None = None,
+) -> str:
     cmap = candidate_map(candidates)
+    existing_feedback = existing_feedback or {}
     lines = [
         "---",
         f"date: {date}",
@@ -276,7 +333,7 @@ def render_note(review: dict[str, Any], candidates: dict[str, Any], date: str) -
             lines.extend(["无。", ""])
             continue
         for item in items:
-            lines.append(render_item(item, cmap, key))
+            lines.append(render_item(item, cmap, key, existing_feedback))
     trends = review.get("trend_observations") or []
     lines.extend(["## 今日趋势", ""])
     if trends:
@@ -313,25 +370,63 @@ def update_seen(review: dict[str, Any], candidates: dict[str, Any], seen_path: P
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default=DEFAULT_CONFIG)
     parser.add_argument("--date", default="")
     parser.add_argument("--review", default="")
     parser.add_argument("--candidates", default="")
     parser.add_argument("--schema", default="config/review.schema.json")
-    parser.add_argument("--output-dir", default="/Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian/3-PaperFlow")
-    parser.add_argument("--seen-path", default="state/seen-papers.txt")
+    parser.add_argument("--output-dir", default="")
+    parser.add_argument("--seen-path", default="")
+    parser.add_argument("--feedback-path", default="")
+    parser.add_argument("--memory-root", default="")
+    parser.add_argument("--skip-memory-update", action="store_true")
+    parser.add_argument("--strict-memory-update", action="store_true")
     args = parser.parse_args()
 
+    config = load_config(args.config)
     date = args.date or dt.date.today().isoformat()
-    review_path = Path(args.review or f"runs/{date}/review.json")
-    candidates_path = Path(args.candidates or f"runs/{date}/candidates.json")
+    today_run_dir = run_dir(config, date)
+    review_path = Path(args.review).expanduser() if args.review else today_run_dir / "review.json"
+    candidates_path = Path(args.candidates).expanduser() if args.candidates else today_run_dir / "candidates.json"
+    schema_path = Path(args.schema).expanduser()
+    if not schema_path.is_absolute():
+        schema_path = project_root() / schema_path
+    output_dir = Path(args.output_dir).expanduser() if args.output_dir else resolve_path(config, "paths.paperflow_root")
+    out_path = output_dir / "Paper-Daily" / date[:4] / f"{date}-paper-codex.md"
     review = load_json(review_path)
     candidates = load_json(candidates_path)
-    validate_review(review, Path(args.schema))
-    note = render_note(review, candidates, date)
-    out_path = Path(args.output_dir) / "Paper-Daily" / date[:4] / f"{date}-paper-codex.md"
+    validate_review(review, schema_path)
+    validate_review_against_candidates(review, candidates)
+    note = render_note(review, candidates, date, existing_feedback=existing_feedback_map(out_path))
+    seen_path = Path(args.seen_path).expanduser() if args.seen_path else resolve_path(
+        config, "paths.seen_path", "state/seen-papers.txt"
+    )
+    feedback_path = Path(args.feedback_path).expanduser() if args.feedback_path else resolve_path(
+        config, "paths.feedback_path", "state/paper-feedback.jsonl"
+    )
+    memory_root = Path(args.memory_root).expanduser() if args.memory_root else resolve_path(
+        config, "paths.memory_dir", "state/paper-memory"
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(note, encoding="utf-8")
-    update_seen(review, candidates, Path(args.seen_path))
+    update_seen(review, candidates, seen_path)
+    if not args.skip_memory_update:
+        try:
+            from update_paper_memory import update_memory
+
+            count = update_memory(
+                review_path=review_path,
+                candidates_path=candidates_path,
+                feedback_path=feedback_path,
+                memory_root=memory_root,
+                date=date,
+                max_query_chars=8000,
+            )
+            print(f"[paperpilot] updated paper memory: {count} papers")
+        except Exception as exc:
+            if args.strict_memory_update:
+                raise
+            print(f"[paperpilot][warn] paper memory update skipped: {type(exc).__name__}: {exc}")
     print(f"[paperpilot] wrote {out_path}")
     return 0
 

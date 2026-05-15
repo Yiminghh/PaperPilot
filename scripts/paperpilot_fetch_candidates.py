@@ -7,15 +7,17 @@ import json
 import math
 import os
 import re
-import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
-import urllib.error
 import xml.etree.ElementTree as ET
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 from typing import Any
+
+from config_utils import DEFAULT_CONFIG, config_value, load_config, project_root, resolve_path
+from paperpilot_utils import canonical_arxiv_id, clean_text, normalize_title, project_path_arg, write_json
 
 
 ARXIV_API = "https://export.arxiv.org/api/query"
@@ -24,7 +26,7 @@ ARXIV_NS = {"arxiv": "http://arxiv.org/schemas/atom"}
 TOKEN_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9\-]+")
 
 
-def load_yaml(path: Path) -> dict[str, Any]:
+def load_yaml_file(path: Path) -> dict[str, Any]:
     try:
         import yaml
     except ImportError as exc:
@@ -33,22 +35,8 @@ def load_yaml(path: Path) -> dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
-def clean_text(text: str | None) -> str:
-    return re.sub(r"\s+", " ", text or "").strip()
-
-
 def tokenize(text: str) -> list[str]:
     return [t.lower() for t in TOKEN_RE.findall(text) if len(t) > 1]
-
-
-def normalize_title(title: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
-
-
-def canonical_arxiv_id(source_id: str) -> str:
-    tail = source_id.rstrip("/").split("/")[-1]
-    tail = re.sub(r"v\d+$", "", tail)
-    return f"arxiv:{tail}"
 
 
 def flatten_interest(interest: dict[str, Any]) -> tuple[list[dict[str, str]], list[str], list[str]]:
@@ -175,7 +163,7 @@ def fetch_arxiv(
     per_category = max(1, math.ceil(max_results / len(categories)))
     merged: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
-    delay = float(os.getenv("PAPERFLOW_ARXIV_CATEGORY_DELAY", "5"))
+    delay = float(os.getenv("PAPERPILOT_ARXIV_CATEGORY_DELAY", "5"))
     for index, category in enumerate(categories):
         if index > 0:
             time.sleep(delay)
@@ -359,6 +347,7 @@ def bm25_scores(
     df: Counter[str] = Counter()
     for doc in docs:
         df.update(set(doc))
+    doc_tfs = [Counter(doc) for doc in docs]
     k1 = 1.5
     b = 0.75
     best: dict[str, dict[str, Any]] = {}
@@ -368,7 +357,7 @@ def bm25_scores(
             continue
         scores: list[tuple[int, float]] = []
         for idx, doc in enumerate(docs):
-            tf = Counter(doc)
+            tf = doc_tfs[idx]
             score = 0.0
             for token in q_tokens:
                 if token not in tf:
@@ -392,8 +381,65 @@ def bm25_scores(
     return best
 
 
-def dot(a: list[float], b: list[float]) -> float:
-    return sum(x * y for x, y in zip(a, b))
+def normalized_vectors(vectors: list[list[float]]) -> list[list[float]]:
+    out = []
+    for vector in vectors:
+        norm = math.sqrt(sum(x * x for x in vector))
+        out.append([x / norm for x in vector] if norm else vector)
+    return out
+
+
+def embedding_api_url(base_url: str) -> str:
+    base = base_url.rstrip("/")
+    if base.endswith("/embeddings"):
+        return base
+    return f"{base}/embeddings"
+
+
+def api_embeddings(texts: list[str], embed_conf: dict[str, Any]) -> list[list[float]]:
+    base_url = (
+        os.getenv("PAPERPILOT_EMBED_BASE_URL")
+        or os.getenv("EMBED_BASE_URL")
+        or str(embed_conf.get("api_base_url") or "")
+    )
+    if not base_url:
+        raise SystemExit("Embedding provider 'api' requires PAPERPILOT_EMBED_BASE_URL or embedding.api_base_url.")
+    key_env = str(embed_conf.get("api_key_env") or "PAPERPILOT_EMBED_API_KEY")
+    api_key = os.getenv(key_env) or os.getenv("PAPERPILOT_EMBED_API_KEY") or os.getenv("OPENAI_API_KEY")
+    model_name = (
+        os.getenv("PAPERPILOT_EMBED_MODEL")
+        or os.getenv("EMBED_MODEL")
+        or str(embed_conf.get("api_model") or embed_conf.get("model") or "")
+    )
+    if not model_name:
+        raise SystemExit("Embedding provider 'api' requires PAPERPILOT_EMBED_MODEL or embedding.model.")
+    batch_size = int(embed_conf.get("api_batch_size") or embed_conf.get("batch_size") or 64)
+    url = embedding_api_url(base_url)
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    vectors: list[list[float]] = []
+    for start in range(0, len(texts), max(batch_size, 1)):
+        batch = texts[start : start + max(batch_size, 1)]
+        payload: dict[str, Any] = {"model": model_name, "input": batch}
+        if embed_conf.get("dimensions"):
+            payload["dimensions"] = int(embed_conf["dimensions"])
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=int(embed_conf.get("api_timeout_seconds") or 60)) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"Embedding API request failed: {type(exc).__name__}: {exc}") from exc
+        items = sorted(data.get("data") or [], key=lambda item: int(item.get("index", 0)))
+        if len(items) != len(batch):
+            raise SystemExit(f"Embedding API returned {len(items)} vectors for {len(batch)} texts.")
+        vectors.extend([list(map(float, item["embedding"])) for item in items])
+    return vectors
 
 
 def embedding_scores(
@@ -406,45 +452,55 @@ def embedding_scores(
 ) -> dict[str, dict[str, Any]]:
     if provider == "none" or not papers or not queries:
         return {}
-    if provider != "local":
-        raise SystemExit(f"Embedding provider {provider!r} is not implemented in the MVP.")
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError as exc:
-        raise SystemExit(
-            "Missing dependency: sentence-transformers. "
-            "Install optional deps or run with `--embedding-provider none` for a light test."
-        ) from exc
-    cache_dir = embed_conf.get("cache_dir")
-    if cache_dir:
-        os.environ.setdefault("HF_HOME", str(cache_dir))
-        os.environ.setdefault("TRANSFORMERS_CACHE", str(cache_dir))
-    model_name = str(embed_conf.get("model") or "BAAI/bge-m3")
-    device = str(embed_conf.get("device") or "cpu")
-    batch_size = int(embed_conf.get("batch_size") or 8)
     query_prefix = str(embed_conf.get("query_prefix") or "")
     document_prefix = str(embed_conf.get("document_prefix") or "")
     normalize = bool(embed_conf.get("normalize_embeddings", True))
-    model = SentenceTransformer(model_name, device=device)
     doc_texts = [document_prefix + text_for_retrieval(p) for p in papers]
     query_texts = [query_prefix + q["text"] for q in queries]
-    doc_emb = model.encode(
-        doc_texts,
-        batch_size=batch_size,
-        convert_to_numpy=True,
-        normalize_embeddings=normalize,
-        show_progress_bar=True,
-    )
-    query_emb = model.encode(
-        query_texts,
-        batch_size=batch_size,
-        convert_to_numpy=True,
-        normalize_embeddings=normalize,
-        show_progress_bar=False,
-    )
+    if provider == "local":
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as exc:
+            raise SystemExit(
+                "Missing dependency: sentence-transformers. "
+                "Install optional deps or run with `--embedding-provider none` for a light test."
+            ) from exc
+        cache_dir = embed_conf.get("cache_dir")
+        if cache_dir:
+            os.environ.setdefault("HF_HOME", str(cache_dir))
+            os.environ.setdefault("TRANSFORMERS_CACHE", str(cache_dir))
+        model_name = str(embed_conf.get("model") or "BAAI/bge-m3")
+        device = str(embed_conf.get("device") or "cpu")
+        batch_size = int(embed_conf.get("batch_size") or 8)
+        model = SentenceTransformer(model_name, device=device)
+        doc_emb = model.encode(
+            doc_texts,
+            batch_size=batch_size,
+            convert_to_numpy=True,
+            normalize_embeddings=normalize,
+            show_progress_bar=True,
+        )
+        query_emb = model.encode(
+            query_texts,
+            batch_size=batch_size,
+            convert_to_numpy=True,
+            normalize_embeddings=normalize,
+            show_progress_bar=False,
+        )
+    elif provider == "api":
+        doc_emb = api_embeddings(doc_texts, embed_conf)
+        query_emb = api_embeddings(query_texts, embed_conf)
+        if normalize:
+            doc_emb = normalized_vectors(doc_emb)
+            query_emb = normalized_vectors(query_emb)
+    else:
+        raise SystemExit(f"Embedding provider {provider!r} is not supported. Use local, api, or none.")
     best: dict[str, dict[str, Any]] = {}
     for q_idx, query in enumerate(queries):
-        scores = [(idx, float(doc_emb[idx].dot(query_emb[q_idx]))) for idx in range(len(papers))]
+        scores = [
+            (idx, float(sum(x * y for x, y in zip(doc_emb[idx], query_emb[q_idx]))))
+            for idx in range(len(papers))
+        ]
         scores.sort(key=lambda x: x[1], reverse=True)
         for rank, (idx, score) in enumerate(scores[:top_k], start=1):
             if score < min_score:
@@ -482,14 +538,32 @@ def apply_priority_boost(paper: dict[str, Any], score: float, boosts: dict[str, 
     return score * multiplier
 
 
+def matched_soft_downweight_terms(paper: dict[str, Any], soft_terms: list[str]) -> list[str]:
+    text = text_for_retrieval(paper).lower()
+    matched = []
+    molecular_context = any(
+        key in text for key in ["molecule", "molecular", "protein", "rna", "drug", "material"]
+    )
+    for term in soft_terms:
+        if not term or term not in text:
+            continue
+        if term == "quantum chemistry" and molecular_context:
+            continue
+        matched.append(term)
+    return matched
+
+
 def rrf_rank(
     papers: list[dict[str, Any]],
     bm25: dict[str, dict[str, Any]],
     emb: dict[str, dict[str, Any]],
     conf: dict[str, Any],
+    soft_downweight_terms: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     rrf_k = int(conf.get("rrf_k") or 60)
     boosts = conf.get("priority_boost") or {}
+    soft_terms = soft_downweight_terms or []
+    soft_multiplier = float(conf.get("soft_downweight_multiplier") or 0.75)
     by_id = {p["canonical_id"]: p for p in papers}
     ids = set(bm25) | set(emb)
     candidates: list[dict[str, Any]] = []
@@ -501,6 +575,10 @@ def rrf_rank(
         if cid in emb:
             score += 1.0 / (rrf_k + int(emb[cid]["rank"]))
         score = apply_priority_boost(paper, score, boosts)
+        soft_matches = matched_soft_downweight_terms(paper, soft_terms)
+        if soft_matches:
+            score *= soft_multiplier
+            paper["soft_downweight_terms"] = soft_matches
         matched = []
         query_scores: dict[str, float] = {}
         for source_scores in (bm25.get(cid, {}), emb.get(cid, {})):
@@ -530,13 +608,15 @@ def read_seen(path: Path) -> set[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config/paper-daily-config.yaml")
+    parser.add_argument("--config", default=DEFAULT_CONFIG)
     parser.add_argument("--interest", default="config/interest-profile.yaml")
     parser.add_argument("--negative", default="config/negative-keywords.yaml")
     parser.add_argument("--output", required=True)
     parser.add_argument("--raw-output", default="")
-    parser.add_argument("--obsidian-output", default="")
-    parser.add_argument("--embedding-provider", default=os.getenv("PAPERFLOW_EMBED_PROVIDER", ""))
+    parser.add_argument(
+        "--embedding-provider",
+        default=os.getenv("PAPERPILOT_EMBED_PROVIDER", ""),
+    )
     parser.add_argument("--max-results", type=int, default=0)
     parser.add_argument("--days-window", type=int, default=0)
     parser.add_argument("--arxiv-retries", type=int, default=3)
@@ -545,33 +625,86 @@ def main() -> int:
     parser.add_argument("--include-seen", action="store_true")
     args = parser.parse_args()
 
-    project_root = Path.cwd()
-    config = load_yaml(project_root / args.config)
-    interest = load_yaml(project_root / args.interest)
-    negative = load_yaml(project_root / args.negative)
+    root = project_root()
+    config = load_config(args.config)
+    interest = load_yaml_file(project_path_arg(args.interest, root))
+    negative = load_yaml_file(project_path_arg(args.negative, root))
     today = dt.date.fromisoformat(args.date) if args.date else dt.date.today()
 
     arxiv_conf = config.get("arxiv") or {}
     retrieval_conf = config.get("retrieval") or {}
     embed_conf = config.get("embedding") or {}
-    state_conf = config.get("state") or {}
+    for key in (
+        "bm25_top_k",
+        "embedding_top_k",
+        "embedding_min_score",
+        "final_top_k",
+        "rrf_k",
+        "matched_queries_per_paper",
+        "soft_downweight_multiplier",
+    ):
+        retrieval_conf[key] = config_value(config, f"retrieval.{key}", retrieval_conf.get(key))
+    for key in (
+        "provider",
+        "model",
+        "device",
+        "batch_size",
+        "query_prefix",
+        "document_prefix",
+        "normalize_embeddings",
+        "api_base_url",
+        "api_key_env",
+        "api_model",
+        "api_batch_size",
+        "api_timeout_seconds",
+    ):
+        embed_conf[key] = config_value(config, f"embedding.{key}", embed_conf.get(key))
+    embed_alias_env = {
+        "model": "PAPERPILOT_EMBED_MODEL",
+        "device": "PAPERPILOT_EMBED_DEVICE",
+        "batch_size": "PAPERPILOT_EMBED_BATCH_SIZE",
+        "api_model": "PAPERPILOT_EMBED_MODEL",
+        "api_base_url": "PAPERPILOT_EMBED_BASE_URL",
+    }
+    for key, env_name in embed_alias_env.items():
+        if os.getenv(env_name) is not None:
+            embed_conf[key] = os.getenv(env_name)
+    if embed_conf.get("cache_dir") or config_value(config, "paths.hf_cache_dir"):
+        cache_default = str(config_value(config, "paths.hf_cache_dir", ".cache/huggingface"))
+        embed_conf["cache_dir"] = str(resolve_path(config, "embedding.cache_dir", cache_default))
     categories = [str(x) for x in arxiv_conf.get("categories", [])]
-    max_results = args.max_results or int(arxiv_conf.get("max_results") or 300)
-    days_window = args.days_window or int(arxiv_conf.get("days_window") or 3)
-    retries = args.arxiv_retries if args.arxiv_retries != 3 else int(arxiv_conf.get("retries") or 3)
-    timeout = args.arxiv_timeout if args.arxiv_timeout != 30 else int(arxiv_conf.get("timeout_seconds") or 30)
-    if "PAPERFLOW_ARXIV_CATEGORY_DELAY" not in os.environ and arxiv_conf.get("category_delay_seconds") is not None:
-        os.environ["PAPERFLOW_ARXIV_CATEGORY_DELAY"] = str(arxiv_conf.get("category_delay_seconds"))
+    max_results = args.max_results or int(config_value(config, "arxiv.max_results", arxiv_conf.get("max_results") or 300))
+    days_window = args.days_window or int(config_value(config, "arxiv.days_window", arxiv_conf.get("days_window") or 3))
+    retries = args.arxiv_retries if args.arxiv_retries != 3 else int(
+        config_value(config, "arxiv.retries", arxiv_conf.get("retries") or 3)
+    )
+    timeout = args.arxiv_timeout if args.arxiv_timeout != 30 else int(
+        config_value(config, "arxiv.timeout_seconds", arxiv_conf.get("timeout_seconds") or 30)
+    )
+    if (
+        "PAPERPILOT_ARXIV_CATEGORY_DELAY" not in os.environ
+        and config_value(config, "arxiv.category_delay_seconds", arxiv_conf.get("category_delay_seconds")) is not None
+    ):
+        os.environ["PAPERPILOT_ARXIV_CATEGORY_DELAY"] = str(
+            config_value(config, "arxiv.category_delay_seconds", arxiv_conf.get("category_delay_seconds"))
+        )
     provider = args.embedding_provider or str(embed_conf.get("provider") or "local")
-    queries, hard_exclude, _soft = flatten_interest(interest)
+    embedding_model_label = (
+        os.getenv("PAPERPILOT_EMBED_MODEL")
+        or os.getenv("EMBED_MODEL")
+        or str(embed_conf.get("api_model") or embed_conf.get("model") or "")
+    )
+    queries, hard_exclude, soft_downweight = flatten_interest(interest)
     hard_exclude.extend(str(x).lower() for x in negative.get("hard_exclude", []) or [])
+    soft_downweight.extend(str(x).lower() for x in negative.get("soft_downweight", []) or [])
 
-    output_path = Path(args.output)
+    output_path = Path(args.output).expanduser()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    raw_path = Path(args.raw_output) if args.raw_output else output_path.with_name("raw.json")
+    raw_path = Path(args.raw_output).expanduser() if args.raw_output else output_path.with_name("raw.json")
     raw_path.parent.mkdir(parents=True, exist_ok=True)
-    seen_path = project_root / str(state_conf.get("seen_path") or "state/seen-papers.txt")
-    seen = read_seen(seen_path) if not args.include_seen else set()
+    seen_path = resolve_path(config, "paths.seen_path", "state/seen-papers.txt")
+    include_seen = args.include_seen or os.getenv("PAPERPILOT_INCLUDE_SEEN", "").lower() in {"1", "true", "yes"}
+    seen = read_seen(seen_path) if not include_seen else set()
 
     print(f"[paperpilot] Fetching arXiv categories={categories} max_results={max_results}", flush=True)
     raw, fetch_errors = fetch_arxiv(
@@ -580,10 +713,7 @@ def main() -> int:
         retries=max(retries, 1),
         timeout=max(timeout, 5),
     )
-    raw_path.write_text(
-        json.dumps({"date": str(today), "skipped_categories": fetch_errors, "papers": raw}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    write_json(raw_path, {"date": str(today), "skipped_categories": fetch_errors, "papers": raw})
     papers = filter_recent(raw, days_window, today=today)
     filtered: list[dict[str, Any]] = []
     seen_count = 0
@@ -606,35 +736,44 @@ def main() -> int:
         filtered.append(paper)
 
     print(f"[paperpilot] recent={len(papers)} after_seen_and_exclude={len(filtered)}", flush=True)
-    bm25 = bm25_scores(filtered, queries, top_k=int(retrieval_conf.get("bm25_top_k") or 50))
+    bm25 = bm25_scores(filtered, queries, top_k=int(config_value(config, "retrieval.bm25_top_k", 50)))
     emb = embedding_scores(
         filtered,
         queries,
         provider=provider,
         embed_conf=embed_conf,
-        top_k=int(retrieval_conf.get("embedding_top_k") or 40),
-        min_score=float(retrieval_conf.get("embedding_min_score") or 0.0),
+        top_k=int(config_value(config, "retrieval.embedding_top_k", 40)),
+        min_score=float(config_value(config, "retrieval.embedding_min_score", 0.0)),
     )
-    ranked = rrf_rank(filtered, bm25, emb, retrieval_conf)
-    final_k = int(retrieval_conf.get("final_top_k") or 100)
+    ranked = rrf_rank(filtered, bm25, emb, retrieval_conf, soft_downweight_terms=soft_downweight)
+    final_k = int(config_value(config, "retrieval.final_top_k", 100))
     candidates = ranked[:final_k]
     payload = {
         "date": str(today),
         "generated_at": dt.datetime.now(dt.UTC).isoformat(),
         "source": "arxiv",
         "embedding_provider": provider,
-        "embedding_model": embed_conf.get("model"),
+        "embedding_model": embedding_model_label,
         "query_count": len(queries),
         "raw_count": len(raw),
         "recent_count": len(papers),
         "seen_count": seen_count,
         "hard_excluded_count": hard_excluded_count,
         "category_policy_excluded_count": category_policy_excluded_count,
+        "bm25_match_count": len(bm25),
+        "embedding_match_count": len(emb),
+        "soft_downweighted_count": sum(1 for item in candidates if item.get("soft_downweight_terms")),
         "candidate_count": len(candidates),
         "skipped_categories": fetch_errors,
         "candidates": candidates,
     }
-    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json(output_path, payload)
+    if not candidates and seen_count:
+        print(
+            "[paperpilot][warn] no candidates after seen filtering; "
+            "for same-day reruns set PAPERPILOT_INCLUDE_SEEN=1 or pass --include-seen",
+            flush=True,
+        )
     print(f"[paperpilot] wrote {output_path}", flush=True)
     return 0
 

@@ -8,11 +8,12 @@ hard_exclude:
   - quantum protocol
   - quantum algorithms
   - quantum networks
+  - medical diagnosis only
   - finance trading
   - blockchain
+  - recommendation systems without graph or science relevance
 
 soft_downweight:
   - quantum chemistry
   - pure benchmark leaderboard
   - generic LLM without science or graph relevance
-

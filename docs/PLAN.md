@@ -166,10 +166,10 @@ MVP 使用 Codex App 的 recurring automation。代码和模型放在 `/Users/hy
 
 ```text
 在 /Users/hym/PycharmProjects/PaperPilot 中运行每日论文推荐流程：
-1. 先运行 scripts/sync_feedback_from_notes.py，从 Obsidian 日报同步用户反馈到 state/paper-feedback.jsonl。
-2. 运行 scripts/run_daily_paperpilot.sh 生成今天的 candidates.json。
-3. 读取 runs/YYYY-MM-DD/candidates.json、config/interest-profile.yaml、config/negative-keywords.yaml、state/paper-feedback.jsonl。
-4. 按 config/review.schema.json 生成 runs/YYYY-MM-DD/review.json。
+1. 运行 scripts/run_candidate_pipeline.sh；它会先同步 Obsidian 反馈，再生成今天的 candidates.json 并写回 verification 字段。
+2. 读取 runs/YYYY-MM-DD/candidates.json、config/interest-profile.yaml、config/negative-keywords.yaml、state/paper-feedback.jsonl。
+3. 按 config/review.schema.json 生成 runs/YYYY-MM-DD/review.json。
+4. 可选运行 scripts/enrich_top_papers.py --date YYYY-MM-DD --top-n 3，然后用 enriched.json 更新 review.json 的 deep_dives。
 5. 运行 scripts/render_daily_note.py，把 review.json 渲染到 Obsidian 的 Paper-Daily/YYYY/YYYY-MM-DD-paper-codex.md。
 6. embedding provider 必须在配置里显式声明；不调用柏拉图 API。
 7. 保留日志和中间文件，失败时说明失败点。
@@ -191,23 +191,10 @@ MVP 使用 Codex App 的 recurring automation。代码和模型放在 `/Users/hy
 
 ### 备用：本地脚本 + Codex 手动/定时调用
 
-如果 Codex App 自动化调度不稳定，可以保留一个确定性的 shell 脚本，只负责非 AI 部分：
+如果 Codex App 自动化调度不稳定，可以保留一个确定性的 shell 脚本，只负责非 AI 部分。脚本不再硬编码项目路径和 Obsidian 路径，运行时路径统一从 `config/paper-daily-config.yaml` 的 `paths` 段读取：
 
 ```bash
-#!/usr/bin/env zsh
-set -euo pipefail
-
-PROJECT="/Users/hym/PycharmProjects/PaperPilot"
-OUTPUT="/Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian/3-PaperFlow"
-TODAY="$(date +%F)"
-
-cd "$PROJECT"
-mkdir -p "runs/$TODAY" "logs" "state"
-
-python scripts/paperpilot_fetch_candidates.py \
-  --config config/paper-daily-config.yaml \
-  --output "runs/$TODAY/candidates.json" \
-  --obsidian-output "$OUTPUT"
+PAPERPILOT_PYTHON=.venv/bin/python scripts/run_candidate_pipeline.sh
 ```
 
 然后由 Codex 读取 `candidates.json` 完成评审，`render_daily_note.py` 负责写入 Obsidian。
@@ -215,7 +202,7 @@ python scripts/paperpilot_fetch_candidates.py \
 Codex 使用固定文件协议：
 
 ```text
-candidates.json -> review.json -> render_daily_note.py -> paper-codex.md
+candidates.json -> initial review.json -> enriched.json -> final review.json -> render_daily_note.py -> paper-codex.md
 ```
 
 ## 目录结构
@@ -238,7 +225,7 @@ candidates.json -> review.json -> render_daily_note.py -> paper-codex.md
 │   ├── paperpilot_fetch_candidates.py
 │   ├── render_daily_note.py
 │   ├── sync_feedback_from_notes.py
-│   └── run_daily_paperpilot.sh
+│   └── run_candidate_pipeline.sh
 ├── src/
 ├── runs/
 │   └── 2026-05-15/
@@ -328,7 +315,8 @@ interest:
       - molecular language model
       - LLM for scientific discovery
       - graph transformer for molecules
-  exclude:
+negative-keywords.yaml:
+  hard_exclude:
     - quantum computing
     - quantum information
     - quantum machine learning
@@ -339,10 +327,13 @@ interest:
     - quantum algorithms
     - quantum networks
     - medical diagnosis only
-    - pure benchmark leaderboard
     - finance trading
     - blockchain
     - recommendation systems without graph or science relevance
+  soft_downweight:
+    - quantum chemistry
+    - pure benchmark leaderboard
+    - generic LLM without science or graph relevance
 
 retrieval:
   category_policy:
@@ -397,13 +388,10 @@ retrieval:
 默认配置：
 
 ```bash
-EMBED_PROVIDER=local
-EMBED_MODEL=BAAI/bge-m3
-EMBED_DEVICE=cpu
-EMBED_BATCH_SIZE=8
-BGE_QUERY_PREFIX=""
-BGE_DOCUMENT_PREFIX=""
-BGE_NORMALIZE_EMBEDDINGS=true
+PAPERPILOT_EMBED_PROVIDER=local
+PAPERPILOT_EMBED_MODEL=BAAI/bge-m3
+PAPERPILOT_EMBED_DEVICE=cpu
+PAPERPILOT_EMBED_BATCH_SIZE=8
 HF_HOME=/Users/hym/PycharmProjects/PaperPilot/.cache/huggingface
 TRANSFORMERS_CACHE=/Users/hym/PycharmProjects/PaperPilot/.cache/huggingface
 ```
@@ -413,28 +401,19 @@ TRANSFORMERS_CACHE=/Users/hym/PycharmProjects/PaperPilot/.cache/huggingface
 低资源 fallback：
 
 ```bash
-EMBED_PROVIDER=local
-EMBED_MODEL=BAAI/bge-small-en-v1.5
-EMBED_DEVICE=cpu
-EMBED_BATCH_SIZE=16
-```
-
-快速跑通或远程服务模式：
-
-```bash
-EMBED_PROVIDER=remote
-EMBED_MODEL=BAAI/bge-small-en-v1.5
-EMBED_BASE_URL=https://example.com/embed
-EMBED_API_KEY=
+PAPERPILOT_EMBED_PROVIDER=local
+PAPERPILOT_EMBED_MODEL=BAAI/bge-small-en-v1.5
+PAPERPILOT_EMBED_DEVICE=cpu
+PAPERPILOT_EMBED_BATCH_SIZE=16
 ```
 
 API embedding 模式：
 
 ```bash
-EMBED_PROVIDER=api
-EMBED_MODEL=text-embedding-3-large
-EMBED_BASE_URL=https://api.openai.com/v1
-EMBED_API_KEY=...
+PAPERPILOT_EMBED_PROVIDER=api
+PAPERPILOT_EMBED_MODEL=text-embedding-3-large
+PAPERPILOT_EMBED_BASE_URL=https://api.openai.com/v1
+PAPERPILOT_EMBED_API_KEY=...
 ```
 
 推荐模型：
@@ -448,9 +427,9 @@ EMBED_API_KEY=...
 Provider 规则：
 
 1. 禁止硬编码默认远程 embedding endpoint。
-2. 远程 embedding 可以使用，但必须显式配置 `EMBED_PROVIDER=remote` 或 `EMBED_PROVIDER=api`。
+2. 远程 embedding 可以使用，但必须显式配置 `PAPERPILOT_EMBED_PROVIDER=api`。
 3. 日志必须打印 provider 和模型名。
-4. 如果远程服务失败，允许回退本地模型，但日志必须明确记录。
+4. 如果 API embedding 失败，本次候选生成应失败；需要手动切回 `PAPERPILOT_EMBED_PROVIDER=local`。
 5. 本地模型统一缓存到 `/Users/hym/PycharmProjects/PaperPilot/.cache/`，不要写入 `3-PaperFlow/`。
 6. 使用 `BAAI/bge-m3` 时，`query_prefix` 和 `document_prefix` 默认为空字符串。
 
@@ -638,7 +617,7 @@ rrf:
 
 输出：
 
-- `/Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian/3-PaperFlow/Paper-Daily/YYYY/YYYY-MM-DD-paper-codex.md`
+- `paths.paperflow_root/Paper-Daily/YYYY/YYYY-MM-DD-paper-codex.md`
 
 职责：
 
@@ -712,8 +691,9 @@ tags:
 - canonical_id:: arxiv:2605.12345
 - url:: https://arxiv.org/abs/2605.12345
 - decision:: 必读
-- feedback:: pending
 - action:: pending
+- rating:: pending
+- feedback:: pending
 
 > [!tip] 一句话结论
 > ...
@@ -753,6 +733,7 @@ tags:
   "user_action": "read",
   "user_rating": 4,
   "user_reason": "和当前项目强相关",
+  "user_feedback": "和当前项目强相关",
   "tags": ["GNN", "optimization"]
 }
 ```
@@ -815,7 +796,7 @@ scripts/sync_feedback_from_notes.py
 
 不要一上来就创建每日自动化。先手动跑通 3 次：
 
-1. `scripts/run_daily_paperpilot.sh` 能稳定生成 `candidates.json`。
+1. `scripts/run_candidate_pipeline.sh` 能稳定生成 `candidates.json`。
 2. Codex 能按 `config/review.schema.json` 生成合法 `review.json`。
 3. `scripts/render_daily_note.py` 能稳定写入 Obsidian 日报。
 4. `scripts/sync_feedback_from_notes.py` 重复运行不会产生重复反馈。
@@ -833,7 +814,7 @@ scripts/sync_feedback_from_notes.py
 
 1. 确定主 runner：Codex App recurring automation。
 2. 固定自动化提示词和工作目录。
-3. 在 `/Users/hym/PycharmProjects/PaperPilot` 新建 `scripts/run_daily_paperpilot.sh`，只负责候选生成的确定性部分。
+3. 在 `/Users/hym/PycharmProjects/PaperPilot` 新建 `scripts/run_candidate_pipeline.sh`，只负责候选生成的确定性部分。
 4. 新建 `config/prompts/run-daily-review.md`，作为 Codex 评审规范。
 5. 新建 `config/review.schema.json`。
 6. 新建 `runs/`、`state/` 和 `logs/`。
@@ -1012,7 +993,7 @@ jsonschema
 1. 确认 MVP 只抓 arXiv。
 2. 清理磁盘，预留至少 8-10 GB 给 Python 依赖和 `BAAI/bge-m3` 缓存。
 3. 新建 `/Users/hym/PycharmProjects/PaperPilot`。
-4. 新建 `scripts/run_daily_paperpilot.sh`。
+4. 新建 `scripts/run_candidate_pipeline.sh`。
 5. 新建本地候选生成脚本。
 6. 新建 `config/review.schema.json`。
 7. 新建 `scripts/render_daily_note.py`。
@@ -1026,3 +1007,4 @@ jsonschema
 - [ziwenhahaha/daily-paper-reader](https://github.com/ziwenhahaha/daily-paper-reader)
 - [TideDra/zotero-arxiv-daily](https://github.com/TideDra/zotero-arxiv-daily)
 - [Future-House/paper-qa](https://github.com/Future-House/paper-qa)
+- [ARIS 借鉴增强计划](ARIS_INTEGRATION_PLAN.md)
