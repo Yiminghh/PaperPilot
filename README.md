@@ -117,7 +117,7 @@ AGENT_GUIDE.md           # Codex 每日执行协议
 README.md                # 项目介绍
 ```
 
-更具体的流程说明已经移到 [docs/README.md](docs/README.md)。
+每日运行步骤见 [docs/RUNBOOK.md](docs/RUNBOOK.md)，架构与设计理由见 [docs/DESIGN.md](docs/DESIGN.md)。
 
 本机路径放在被 git 忽略的 `config/local.yaml`。新机器从
 `config/local.example.yaml` 复制一份再改路径。
