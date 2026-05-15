@@ -1,0 +1,63 @@
+profile_source: /Users/hym/Downloads/CV-Yiming.pdf
+
+include:
+  primary:
+    - topological deep learning
+    - higher-order graph neural networks
+    - higher-order graph representation learning
+    - simplicial complexes and cell complexes
+    - combinatorial complexes
+    - hypergraph neural networks
+    - graph generation with higher-order topology
+    - topology-aware diffusion models for graphs
+    - molecular graph generation
+    - molecular foundation models
+    - topology-aware molecular representation learning
+    - RNA representation learning
+    - RNA structure and dynamics modeling
+    - AI4Science for molecules, biomolecules, and RNA
+  secondary:
+    - large language models for scientific discovery
+    - foundation models for science
+    - scientific foundation models
+    - graph foundation models
+    - generative models for graphs and molecules
+    - geometric deep learning
+    - graph representation learning
+    - network science with machine learning
+    - influence maximization in complex networks
+    - node ranking and key player identification
+    - decentralized graph learning
+    - autonomous research agents for AI4Science
+  query_expansion:
+    - topology-aware generative model
+    - higher-order topology for graph learning
+    - cell complex neural network
+    - simplicial neural network
+    - ring-aware molecular generation
+    - coarse-to-fine graph diffusion
+    - contact map RNA representation learning
+    - molecular language model
+    - LLM for scientific discovery
+    - graph transformer for molecules
+
+negative:
+  hard_exclude:
+    - quantum computing
+    - quantum information
+    - quantum machine learning
+    - quantum communication
+    - quantum cryptography
+    - quantum steganalysis
+    - quantum protocol
+    - quantum algorithms
+    - quantum networks
+    - medical diagnosis only
+    - pure benchmark leaderboard
+    - finance trading
+    - blockchain
+    - recommendation systems without graph or science relevance
+  soft_downweight:
+    - quantum chemistry
+    - generic LLM without science or graph relevance
+

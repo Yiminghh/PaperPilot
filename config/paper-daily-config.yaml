@@ -1,0 +1,54 @@
+project:
+  name: paperpilot
+  timezone: Europe/London
+  output_dir: /Users/hym/Library/CloudStorage/OneDrive-std.uestc.edu.cn/Obsidian/3-PaperFlow
+
+arxiv:
+  categories:
+    - cs.AI
+    - cs.LG
+    - cs.CL
+    - cs.CV
+    - stat.ML
+    - q-bio.BM
+    - q-bio.MN
+    - q-bio.QM
+  days_window: 3
+  max_results: 120
+  category_delay_seconds: 8
+  retries: 2
+  timeout_seconds: 20
+
+embedding:
+  provider: local
+  model: BAAI/bge-m3
+  device: cpu
+  batch_size: 8
+  query_prefix: ""
+  document_prefix: ""
+  normalize_embeddings: true
+  cache_dir: /Users/hym/PycharmProjects/PaperPilot/.cache/huggingface
+
+retrieval:
+  bm25_top_k: 50
+  embedding_top_k: 40
+  embedding_min_score: 0.50
+  final_top_k: 100
+  rrf_k: 60
+  matched_queries_per_paper: 6
+  category_policy:
+    cs.CL: only_keep_if_llm_or_foundation_model_relevant_to_science_or_graphs
+    cs.CV: only_keep_if_geometric_3d_scientific_or_molecular_relevant
+    q-bio: keep_if_ai4science_or_representation_learning_relevant
+  priority_boost:
+    topological_deep_learning: 1.5
+    higher_order_graphs: 1.5
+    molecular_or_rna_ai4science: 1.4
+    foundation_models_for_science: 1.25
+    generic_llm_without_science_or_graph: 0.6
+    quantum_related: 0.0
+    quantum_chemistry_with_molecular_ml: 0.7
+
+state:
+  seen_path: state/seen-papers.txt
+  feedback_path: state/paper-feedback.jsonl

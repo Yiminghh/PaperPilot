@@ -1,0 +1,18 @@
+hard_exclude:
+  - quantum computing
+  - quantum information
+  - quantum machine learning
+  - quantum communication
+  - quantum cryptography
+  - quantum steganalysis
+  - quantum protocol
+  - quantum algorithms
+  - quantum networks
+  - finance trading
+  - blockchain
+
+soft_downweight:
+  - quantum chemistry
+  - pure benchmark leaderboard
+  - generic LLM without science or graph relevance
+

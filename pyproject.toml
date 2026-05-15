@@ -1,0 +1,18 @@
+[project]
+name = "paperpilot"
+version = "0.1.0"
+description = "Local Codex-driven daily paper recommendation pipeline."
+requires-python = ">=3.11"
+dependencies = [
+  "pyyaml>=6.0.1",
+  "jsonschema>=4.22.0",
+]
+
+[project.optional-dependencies]
+embedding = [
+  "sentence-transformers>=3.0.0",
+]
+
+[tool.ruff]
+line-length = 100
+

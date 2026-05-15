@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "date",
+    "summary",
+    "must_read",
+    "worth_reading",
+    "later",
+    "skip",
+    "deep_dives",
+    "trend_observations",
+    "tomorrow_followups"
+  ],
+  "properties": {
+    "date": {"type": "string"},
+    "summary": {"type": "string"},
+    "must_read": {"type": "array", "items": {"$ref": "#/$defs/paper_decision"}},
+    "worth_reading": {"type": "array", "items": {"$ref": "#/$defs/paper_decision"}},
+    "later": {"type": "array", "items": {"$ref": "#/$defs/paper_decision"}},
+    "skip": {"type": "array", "items": {"$ref": "#/$defs/paper_decision"}},
+    "deep_dives": {"type": "array", "items": {"$ref": "#/$defs/deep_dive"}},
+    "trend_observations": {"type": "array", "items": {"type": "string"}},
+    "tomorrow_followups": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "paper_decision": {
+      "type": "object",
+      "required": [
+        "canonical_id",
+        "title",
+        "decision",
+        "one_sentence",
+        "reason",
+        "relevance",
+        "suggested_action"
+      ],
+      "properties": {
+        "canonical_id": {"type": "string"},
+        "title": {"type": "string"},
+        "url": {"type": "string"},
+        "decision": {"type": "string"},
+        "one_sentence": {"type": "string"},
+        "reason": {"type": "string"},
+        "relevance": {"type": "string"},
+        "reusable_idea": {"type": "string"},
+        "uncertainty": {"type": "string"},
+        "suggested_action": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "deep_dive": {
+      "type": "object",
+      "required": [
+        "canonical_id",
+        "title",
+        "source_basis",
+        "tldr",
+        "summary_zh",
+        "problem",
+        "method",
+        "core_innovations",
+        "evidence",
+        "limitations",
+        "relevance_to_me",
+        "reusable_ideas",
+        "questions_to_check",
+        "reading_priority"
+      ],
+      "properties": {
+        "canonical_id": {"type": "string"},
+        "title": {"type": "string"},
+        "url": {"type": "string"},
+        "source_basis": {"type": "string"},
+        "tldr": {"type": "string"},
+        "summary_zh": {"type": "string"},
+        "problem": {"type": "string"},
+        "method": {"type": "string"},
+        "core_innovations": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+        "limitations": {"type": "array", "items": {"type": "string"}},
+        "relevance_to_me": {"type": "string"},
+        "reusable_ideas": {"type": "array", "items": {"type": "string"}},
+        "questions_to_check": {"type": "array", "items": {"type": "string"}},
+        "reading_priority": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
